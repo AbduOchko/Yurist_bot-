@@ -29,6 +29,11 @@
   --transition-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* Global hidden utility — MUST be first to block overlays from intercepting clicks */
+.hidden {
+  display: none !important;
+}
+
 * {
   margin: 0;
   padding: 0;

@@ -3,7 +3,15 @@
 ─────────────────────────────────────────── */
 
 const tg = window.Telegram?.WebApp;
-if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); }
+if (tg) {
+  tg.ready();
+  tg.expand();
+  try { tg.setHeaderColor('#000000'); } catch(e) {}
+  try { tg.setBackgroundColor('#000000'); } catch(e) {}
+  // Enable native Telegram back button
+  tg.BackButton.show();
+  tg.BackButton.onClick(() => { window.location.href = '/'; });
+}
 
 // ── URL params ──────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -73,16 +81,18 @@ async function init() {
   $statusTxt.textContent = cfg.status;
   setChatAvatar(CHAT_TYPE);
 
-  USER = tg?.initDataUnsafe?.user || { id: Date.now(), first_name: 'Тест' };
+  // Fallback user when not inside Telegram
+  USER = tg?.initDataUnsafe?.user || { id: 100000001, first_name: 'Гость', username: null, last_name: null };
   USER_ID_INT = USER.id;
 
-  // Register user & get/create chat
+  $list.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
+
   try {
     const userRes = await api('POST', '/api/users/', {
       telegram_id: USER_ID_INT,
-      username: USER.username,
-      first_name: USER.first_name,
-      last_name: USER.last_name,
+      username: USER.username || null,
+      first_name: USER.first_name || 'Гость',
+      last_name: USER.last_name || null,
     });
 
     const chatRes = await api('POST', '/api/chats/', {
@@ -96,7 +106,17 @@ async function init() {
     await loadPinned();
   } catch (e) {
     console.error('Init error:', e);
-    showError();
+    $list.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon" style="font-size:28px">⚠️</div>
+        <h3>Ошибка подключения</h3>
+        <p>Не удалось загрузить чат. Проверьте соединение.</p>
+        <button onclick="location.reload()" style="
+          margin-top:16px;padding:12px 24px;background:#fff;color:#000;
+          border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">
+          Попробовать снова
+        </button>
+      </div>`;
   }
 }
 
@@ -902,8 +922,7 @@ function autoResize() {
 
 // ── Event listeners ───────────────────────────
 $backBtn.addEventListener('click', () => {
-  if (tg) tg.close();
-  else history.back();
+  window.location.href = '/';
 });
 
 $input.addEventListener('input', () => {

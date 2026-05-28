@@ -1,10 +1,11 @@
-// Initialize Telegram WebApp
 const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
   tg.expand();
-  tg.setHeaderColor('#000000');
-  tg.setBackgroundColor('#000000');
+  try { tg.setHeaderColor('#000000'); } catch(e) {}
+  try { tg.setBackgroundColor('#000000'); } catch(e) {}
+  // Hide back button on main menu
+  tg.BackButton.hide();
 }
 
 // Register user on app start
