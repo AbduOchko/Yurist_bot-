@@ -196,6 +196,17 @@ function handleWSMessage(data) {
       finalizeAIMessage(data);
       break;
 
+    case 'ai_error':
+      // Remove typing indicator and streaming bubble
+      $list.querySelector('.typing-indicator')?.remove();
+      if (aiStreamEl) {
+        $list.querySelector('[data-id="ai-stream"]')?.remove();
+        aiStreamEl = null;
+        aiStreamBuffer = '';
+      }
+      showToast(data.content || 'Ошибка ИИ-советника');
+      break;
+
     case 'edit':
       updateMessage(data);
       break;
@@ -542,7 +553,7 @@ async function sendMessage() {
     scrollToBottom(true);
 
     try {
-      await fetch('/api/ai/chat', {
+      const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -551,9 +562,14 @@ async function sendMessage() {
           user_id: USER_ID_INT,
         }),
       });
+      if (!res.ok) {
+        // Server error — remove typing indicator right away
+        $list.querySelector('.typing-indicator')?.remove();
+        showToast('Ошибка ИИ-советника. Попробуйте ещё раз.');
+      }
     } catch (e) {
       $list.querySelector('.typing-indicator')?.remove();
-      showToast('Ошибка отправки');
+      showToast('Нет связи с сервером');
     }
   } else {
     try {

@@ -1,5 +1,7 @@
-from openai import AsyncOpenAI
+import logging
+
 from fastapi import APIRouter, Depends
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +10,8 @@ from app.config import settings
 from app.db import crud
 from app.db.models import SenderType
 from app.db.session import get_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -47,9 +51,14 @@ class AIChatIn(BaseModel):
     user_id: int
 
 
+async def _send_error(chat_id: int, text: str):
+    """Send an error message to the chat via WebSocket so the client clears the typing indicator."""
+    await manager.broadcast_to_chat(chat_id, {"type": "ai_error", "content": text})
+
+
 @router.post("/chat")
 async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
-    # Save user message
+    # Save and broadcast user message
     user_msg = await crud.create_message(
         session,
         chat_id=data.chat_id,
@@ -58,7 +67,6 @@ async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
         sender_id=data.user_id,
     )
 
-    # Broadcast user message to chat
     await manager.broadcast_to_chat(
         data.chat_id,
         {
@@ -72,35 +80,50 @@ async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
         },
     )
 
-    # Build message history
+    # Check API key
+    if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
+        logger.error("LLMOST_API_KEY is not configured")
+        await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
+        return {"ok": False, "error": "api_key_missing"}
+
+    # Build history
     history = await crud.get_messages(session, data.chat_id, limit=30)
     messages = build_messages(history)
-
-    # Ensure last message is user's
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": data.user_message})
 
     client = get_client()
     full_response = ""
 
-    # Stream response via WebSocket
-    stream = await client.chat.completions.create(
-        model=settings.LLMOST_MODEL,
-        messages=messages,
-        max_tokens=2048,
-        stream=True,
-    )
+    try:
+        stream = await client.chat.completions.create(
+            model=settings.LLMOST_MODEL,
+            messages=messages,
+            max_tokens=2048,
+            stream=True,
+            timeout=60,
+        )
 
-    async for chunk in stream:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            full_response += delta
-            await manager.broadcast_to_chat(
-                data.chat_id,
-                {"type": "ai_chunk", "content": delta},
-            )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                full_response += delta
+                await manager.broadcast_to_chat(
+                    data.chat_id,
+                    {"type": "ai_chunk", "content": delta},
+                )
 
-    # Save complete AI response
+    except Exception as e:
+        logger.error(f"AI streaming error: {type(e).__name__}: {e}")
+        error_text = "ИИ-советник временно недоступен. Попробуйте позже или обратитесь к живому юристу."
+        await _send_error(data.chat_id, error_text)
+        return {"ok": False, "error": str(e)}
+
+    if not full_response:
+        await _send_error(data.chat_id, "ИИ не вернул ответ. Попробуйте переформулировать вопрос.")
+        return {"ok": False, "error": "empty_response"}
+
+    # Save and broadcast AI response
     ai_msg = await crud.create_message(
         session,
         chat_id=data.chat_id,
