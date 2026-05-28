@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Юрист Бот</title>
+  <link rel="stylesheet" href="/css/style.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div class="header-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <h1>Юрист Бот</h1>
+      <p>Профессиональная юридическая помощь</p>
+    </div>
+
+    <div class="cards-container">
+
+      <!-- AI Consultant -->
+      <a class="card" href="/chat.html?type=ai" id="card-ai">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 8v4l3 3"/>
+            <circle cx="12" cy="12" r="3" fill="currentColor" fill-opacity="0.2"/>
+          </svg>
+        </div>
+        <div class="card-content">
+          <div class="card-title">ИИ-Советник</div>
+          <div class="card-desc">Мгновенные консультации на базе искусственного интеллекта</div>
+        </div>
+        <div class="card-arrow">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </div>
+        <div class="badge ai">ИИ</div>
+      </a>
+
+      <!-- Live Lawyer -->
+      <a class="card" href="/chat.html?type=lawyer" id="card-lawyer">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <div class="card-content">
+          <div class="card-title">Личный Юрист</div>
+          <div class="card-desc">Консультация с живым специалистом в режиме реального времени</div>
+        </div>
+        <div class="card-arrow">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </div>
+        <div class="badge online" id="lawyer-badge">Онлайн</div>
+      </a>
+
+      <!-- Legal Matchmaker -->
+      <a class="card" href="/chat.html?type=match" id="card-match">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35"/>
+            <path d="M11 8v6M8 11h6"/>
+          </svg>
+        </div>
+        <div class="card-content">
+          <div class="card-title">Подбор Юриста</div>
+          <div class="card-desc">Найдём подходящего специалиста под вашу задачу</div>
+        </div>
+        <div class="card-arrow">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </div>
+      </a>
+
+    </div>
+
+    <div class="footer">
+      Все консультации конфиденциальны
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

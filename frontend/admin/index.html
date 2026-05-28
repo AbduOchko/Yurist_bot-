@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Юрист Бот — Админ</title>
+  <link rel="stylesheet" href="/admin/css/admin.css"/>
+</head>
+<body>
+
+<!-- ─── LOGIN PAGE ─── -->
+<div class="login-page" id="loginPage">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+        <path d="M2 17l10 5 10-5"/>
+        <path d="M2 12l10 5 10-5"/>
+      </svg>
+    </div>
+    <h1>Панель управления</h1>
+    <p>Войдите для доступа к системе</p>
+    <div class="form-group">
+      <label class="form-label">Пароль</label>
+      <input type="password" class="form-input" id="passwordInput" placeholder="Введите пароль" autocomplete="current-password"/>
+    </div>
+    <button class="btn-primary" id="loginBtn">Войти</button>
+    <div class="error-msg" id="loginError">Неверный пароль</div>
+  </div>
+</div>
+
+<!-- ─── ADMIN LAYOUT ─── -->
+<div class="admin-layout" id="adminLayout">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <div class="sidebar-logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+          </svg>
+        </div>
+        <h2>Юрист Бот</h2>
+      </div>
+      <div class="sidebar-subtitle">Панель управления</div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-panel="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        Дашборд
+      </div>
+      <div class="nav-item" data-panel="users">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        Пользователи
+        <span class="nav-badge" id="usersBadge">0</span>
+      </div>
+      <div class="nav-item" data-panel="lawyer-chats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        Личный Юрист
+        <span class="nav-badge" id="lawyerBadge">0</span>
+      </div>
+      <div class="nav-item" data-panel="match-chats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="M21 21l-4.35-4.35"/>
+        </svg>
+        Подбор Юриста
+        <span class="nav-badge" id="matchBadge">0</span>
+      </div>
+      <div class="nav-item" data-panel="ai-chats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 8v4l3 3"/>
+        </svg>
+        ИИ-Чаты
+        <span class="nav-badge" id="aiBadge">0</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="logout-btn" id="logoutBtn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16,17 21,12 16,7"/>
+          <line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        Выйти
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-content">
+
+    <!-- Dashboard Panel -->
+    <div class="panel active" id="panel-dashboard">
+      <div class="panel-title">Дашборд</div>
+      <div class="panel-subtitle">Общая статистика системы</div>
+
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+          <div class="stat-label">Пользователи</div>
+          <div class="stat-value" id="statUsers">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">ИИ-Чаты</div>
+          <div class="stat-value" id="statAiChats">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Юрист-Чаты</div>
+          <div class="stat-value" id="statLawyerChats">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Подбор-Чаты</div>
+          <div class="stat-value" id="statMatchChats">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Всего Сообщений</div>
+          <div class="stat-value" id="statMessages">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Users Panel -->
+    <div class="panel" id="panel-users">
+      <div class="panel-title">Пользователи</div>
+      <div class="panel-subtitle">Все зарегистрированные пользователи</div>
+      <div class="table-wrap">
+        <div class="table-header">
+          <h3>Список пользователей</h3>
+          <input type="text" class="table-search" id="usersSearch" placeholder="Поиск..."/>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Имя</th>
+              <th>Username</th>
+              <th>Telegram ID</th>
+              <th>Зарегистрирован</th>
+            </tr>
+          </thead>
+          <tbody id="usersTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Lawyer Chats Panel -->
+    <div class="panel" id="panel-lawyer-chats" style="padding:0;overflow:hidden;">
+      <div class="chats-layout">
+        <div class="chats-sidebar">
+          <div class="chats-sidebar-header">
+            <h3>Личный Юрист</h3>
+          </div>
+          <div class="chat-list" id="lawyerChatList"></div>
+        </div>
+        <div class="chat-detail" id="lawyerChatDetail">
+          <div class="chat-detail-empty">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Выберите чат</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Match Chats Panel -->
+    <div class="panel" id="panel-match-chats" style="padding:0;overflow:hidden;">
+      <div class="chats-layout">
+        <div class="chats-sidebar">
+          <div class="chats-sidebar-header">
+            <h3>Подбор Юриста</h3>
+          </div>
+          <div class="chat-list" id="matchChatList"></div>
+        </div>
+        <div class="chat-detail" id="matchChatDetail">
+          <div class="chat-detail-empty">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Выберите чат</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Chats Panel -->
+    <div class="panel" id="panel-ai-chats" style="padding:0;overflow:hidden;">
+      <div class="chats-layout">
+        <div class="chats-sidebar">
+          <div class="chats-sidebar-header">
+            <h3>ИИ-Советник</h3>
+          </div>
+          <div class="chat-list" id="aiChatList"></div>
+        </div>
+        <div class="chat-detail" id="aiChatDetail">
+          <div class="chat-detail-empty">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Выберите чат</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="admin-toast" id="adminToast"></div>
+
+<script src="/admin/js/admin.js"></script>
+</body>
+</html>

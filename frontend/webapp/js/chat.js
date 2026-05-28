@@ -1,0 +1,1027 @@
+/* ───────────────────────────────────────────
+   Юрист Бот – Chat Page Logic
+─────────────────────────────────────────── */
+
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); }
+
+// ── URL params ──────────────────────────────
+const params = new URLSearchParams(location.search);
+const CHAT_TYPE = params.get('type') || 'ai';
+const API_BASE = '';  // same origin
+
+const CHAT_CONFIG = {
+  ai:     { title: 'ИИ-Советник',    status: 'Всегда онлайн', icon: 'ai'     },
+  lawyer: { title: 'Личный Юрист',   status: 'онлайн',         icon: 'lawyer' },
+  match:  { title: 'Подбор Юриста',  status: 'онлайн',         icon: 'match'  },
+};
+
+const FORWARD_TARGETS = {
+  ai:     { title: 'ИИ-Советник',   desc: 'Консультация с ИИ'           },
+  lawyer: { title: 'Личный Юрист',  desc: 'Чат с живым юристом'         },
+  match:  { title: 'Подбор Юриста', desc: 'Поиск специалиста'           },
+};
+
+// ── State ───────────────────────────────────
+let USER = null;
+let USER_ID_INT = null;
+let CHAT_ID = null;
+let ws = null;
+let messages = [];           // {id, sender_type, content, message_type, file_url, file_name, is_pinned, reply_to, created_at, updated_at}
+let editingMessageId = null;
+let replyToMessage = null;
+let forwardMessageId = null;
+let selectedMessageId = null;
+let aiStreamBuffer = '';
+let aiStreamEl = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let pinnedMessages = [];
+
+// ── DOM refs ─────────────────────────────────
+const $title     = document.getElementById('chatTitle');
+const $statusDot = document.getElementById('statusDot');
+const $statusTxt = document.getElementById('statusText');
+const $list      = document.getElementById('messagesList');
+const $input     = document.getElementById('textInput');
+const $sendBtn   = document.getElementById('sendBtn');
+const $backBtn   = document.getElementById('backBtn');
+const $voiceBtn  = document.getElementById('voiceBtn');
+const $attachBtn = document.getElementById('attachBtn');
+const $attachMenu= document.getElementById('attachMenu');
+const $pinnedBar = document.getElementById('pinnedBar');
+const $pinnedTxt = document.getElementById('pinnedText');
+const $editBanner    = document.getElementById('editBanner');
+const $editBannerLbl = document.getElementById('editBannerLabel');
+const $editBannerTxt = document.getElementById('editBannerText');
+const $editBannerClose = document.getElementById('editBannerClose');
+const $ctxMenu   = document.getElementById('contextMenu');
+const $ctxOverlay= document.getElementById('contextOverlay');
+const $toast     = document.getElementById('toast');
+const $fwdModal  = document.getElementById('forwardModal');
+const $fwdOpts   = document.getElementById('forwardOptions');
+const $fwdCancel = document.getElementById('forwardCancel');
+const $imgViewer = document.getElementById('imageViewer');
+const $imgViewerImg  = document.getElementById('imageViewerImg');
+const $imgViewerClose= document.getElementById('imageViewerClose');
+
+// ── Init ─────────────────────────────────────
+async function init() {
+  const cfg = CHAT_CONFIG[CHAT_TYPE];
+  $title.textContent = cfg.title;
+  $statusTxt.textContent = cfg.status;
+  setChatAvatar(CHAT_TYPE);
+
+  USER = tg?.initDataUnsafe?.user || { id: Date.now(), first_name: 'Тест' };
+  USER_ID_INT = USER.id;
+
+  // Register user & get/create chat
+  try {
+    const userRes = await api('POST', '/api/users/', {
+      telegram_id: USER_ID_INT,
+      username: USER.username,
+      first_name: USER.first_name,
+      last_name: USER.last_name,
+    });
+
+    const chatRes = await api('POST', '/api/chats/', {
+      user_id: userRes.id,
+      chat_type: CHAT_TYPE,
+    });
+    CHAT_ID = chatRes.id;
+
+    await loadMessages();
+    connectWS();
+    await loadPinned();
+  } catch (e) {
+    console.error('Init error:', e);
+    showError();
+  }
+}
+
+function setChatAvatar(type) {
+  const icons = {
+    ai:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>`,
+    lawyer: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+    match:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`,
+  };
+  document.getElementById('chatAvatar').innerHTML = icons[type] || icons.ai;
+}
+
+// ── API helper ───────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API_BASE + path, opts);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// ── Load messages ────────────────────────────
+async function loadMessages() {
+  const data = await api('GET', `/api/messages/${CHAT_ID}?limit=100`);
+  messages = data;
+  renderMessages();
+  scrollToBottom(false);
+}
+
+async function loadPinned() {
+  try {
+    pinnedMessages = await api('GET', `/api/chats/${CHAT_ID}/pinned`);
+    updatePinnedBar();
+  } catch {}
+}
+
+// ── WebSocket ────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${proto}://${location.host}/ws/chat/${CHAT_ID}/${USER_ID_INT}`;
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => console.log('WS connected');
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    handleWSMessage(data);
+  };
+
+  ws.onclose = () => {
+    setTimeout(connectWS, 3000);
+  };
+
+  // Heartbeat
+  setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }, 25000);
+}
+
+function handleWSMessage(data) {
+  switch (data.type) {
+    case 'message':
+      if (!messages.find(m => m.id === data.id)) {
+        messages.push(data);
+        appendMessage(data);
+        scrollToBottom(true);
+      }
+      break;
+
+    case 'ai_chunk':
+      handleAIChunk(data.content);
+      break;
+
+    case 'ai_done':
+      finalizeAIMessage(data);
+      break;
+
+    case 'edit':
+      updateMessage(data);
+      break;
+
+    case 'delete':
+      markDeleted(data.message_id);
+      break;
+
+    case 'pin':
+      updatePinState(data);
+      break;
+
+    case 'typing':
+      if (data.user_id !== USER_ID_INT) showTypingIndicator();
+      break;
+  }
+}
+
+// ── Render all messages ───────────────────────
+function renderMessages() {
+  $list.innerHTML = '';
+  if (!messages.length) {
+    renderEmpty();
+    return;
+  }
+  let lastDate = null;
+  messages.forEach(msg => {
+    const date = new Date(msg.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    if (date !== lastDate) {
+      $list.appendChild(createDateSep(date));
+      lastDate = date;
+    }
+    $list.appendChild(createMessageEl(msg));
+  });
+}
+
+function renderEmpty() {
+  const prompts = {
+    ai:     { icon: '🤖', title: 'ИИ-Советник готов',    text: 'Задайте любой юридический вопрос — получите профессиональный ответ мгновенно.' },
+    lawyer: { icon: '👨‍💼', title: 'Личный Юрист',        text: 'Напишите ваш вопрос — юрист ответит в ближайшее время.' },
+    match:  { icon: '🔍', title: 'Подбор Юриста',        text: 'Опишите вашу проблему — мы подберём подходящего специалиста.' },
+  };
+  const p = prompts[CHAT_TYPE];
+  $list.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-state-icon" style="font-size:28px">${p.icon}</div>
+      <h3>${p.title}</h3>
+      <p>${p.text}</p>
+    </div>`;
+}
+
+function showError() {
+  $list.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-state-icon">⚠️</div>
+      <h3>Ошибка подключения</h3>
+      <p>Попробуйте обновить страницу</p>
+    </div>`;
+}
+
+// ── Date separator ────────────────────────────
+function createDateSep(text) {
+  const el = document.createElement('div');
+  el.className = 'date-separator';
+  el.innerHTML = `<span>${text}</span>`;
+  return el;
+}
+
+// ── Create message element ────────────────────
+function createMessageEl(msg) {
+  const isUser = msg.sender_type === 'user';
+  const wrap = document.createElement('div');
+  wrap.className = `message-wrap ${isUser ? 'user' : 'other'}`;
+  wrap.dataset.id = msg.id;
+
+  if (!isUser && msg.sender_name) {
+    const lbl = document.createElement('div');
+    lbl.className = 'message-group-label';
+    lbl.textContent = msg.sender_name;
+    wrap.appendChild(lbl);
+  }
+
+  const bubble = document.createElement('div');
+  bubble.className = `bubble${msg.is_pinned ? ' pinned' : ''}${msg.is_deleted ? ' deleted' : ''}`;
+
+  if (msg.is_deleted) {
+    bubble.textContent = 'Сообщение удалено';
+  } else {
+    // Forwarded badge
+    if (msg.forwarded_from_chat_type) {
+      const fwd = document.createElement('div');
+      fwd.className = 'forwarded-badge';
+      const names = { ai: 'ИИ-Советник', lawyer: 'Личный Юрист', match: 'Подбор Юриста' };
+      fwd.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,17 20,12 15,7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg> Переслано из ${names[msg.forwarded_from_chat_type] || ''}`;
+      bubble.appendChild(fwd);
+    }
+
+    // Reply preview
+    if (msg.reply_to) {
+      const rv = document.createElement('div');
+      rv.className = 'reply-preview';
+      rv.innerHTML = `<div class="reply-sender">${msg.reply_to.sender_type === 'user' ? 'Вы' : 'Юрист'}</div><div>${truncate(msg.reply_to.content || '[медиа]', 80)}</div>`;
+      bubble.appendChild(rv);
+    }
+
+    // Content based on type
+    bubble.appendChild(renderContent(msg, isUser));
+  }
+
+  // Long-press handler
+  let pressTimer;
+  const showCtx = (e) => {
+    e.preventDefault();
+    showContextMenu(e, msg.id, isUser, msg);
+  };
+  wrap.addEventListener('contextmenu', showCtx);
+  wrap.addEventListener('touchstart', () => { pressTimer = setTimeout(() => showContextMenu({ clientX: 80, clientY: 300 }, msg.id, isUser, msg), 600); }, { passive: true });
+  wrap.addEventListener('touchend', () => clearTimeout(pressTimer), { passive: true });
+  wrap.addEventListener('touchmove', () => clearTimeout(pressTimer), { passive: true });
+
+  wrap.appendChild(bubble);
+
+  // Meta line
+  const meta = document.createElement('div');
+  meta.className = 'message-meta';
+  const time = document.createElement('span');
+  time.className = 'message-time';
+  time.textContent = formatTime(msg.created_at);
+  meta.appendChild(time);
+  if (msg.updated_at && msg.updated_at !== msg.created_at) {
+    const ed = document.createElement('span');
+    ed.className = 'message-edited';
+    ed.textContent = '· изм.';
+    meta.appendChild(ed);
+  }
+  if (msg.is_pinned) {
+    meta.innerHTML += `<svg class="pin-icon-small" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+  }
+  wrap.appendChild(meta);
+
+  return wrap;
+}
+
+function renderContent(msg, isUser) {
+  const frag = document.createDocumentFragment();
+
+  if (msg.message_type === 'image' && msg.file_url) {
+    const img = document.createElement('img');
+    img.className = 'bubble-image';
+    img.src = msg.file_url;
+    img.alt = msg.file_name || 'Изображение';
+    img.loading = 'lazy';
+    img.addEventListener('click', () => openImageViewer(msg.file_url));
+    frag.appendChild(img);
+  } else if (msg.message_type === 'video' && msg.file_url) {
+    const vid = document.createElement('video');
+    vid.className = 'bubble-video';
+    vid.src = msg.file_url;
+    vid.controls = true;
+    vid.playsinline = true;
+    frag.appendChild(vid);
+  } else if (msg.message_type === 'voice' && msg.file_url) {
+    frag.appendChild(createVoicePlayer(msg, isUser));
+  } else if (msg.message_type === 'audio' && msg.file_url) {
+    const audio = document.createElement('audio');
+    audio.className = 'bubble-audio';
+    audio.src = msg.file_url;
+    audio.controls = true;
+    frag.appendChild(audio);
+  } else if (msg.message_type === 'document' && msg.file_url) {
+    frag.appendChild(createFileCard(msg));
+  } else {
+    const span = document.createElement('span');
+    span.style.whiteSpace = 'pre-wrap';
+    span.textContent = msg.content || '';
+    frag.appendChild(span);
+  }
+
+  if (msg.content && msg.message_type !== 'text' && msg.message_type !== 'system') {
+    const cap = document.createElement('div');
+    cap.style.cssText = 'margin-top:6px;font-size:14px;';
+    cap.textContent = msg.content;
+    frag.appendChild(cap);
+  }
+
+  return frag;
+}
+
+function createVoicePlayer(msg, isUser) {
+  const div = document.createElement('div');
+  div.className = 'voice-player';
+  div.innerHTML = `
+    <button class="voice-play-btn" data-url="${msg.file_url}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5,3 19,12 5,21 5,3"/>
+      </svg>
+    </button>
+    <div class="voice-waveform"><div class="voice-progress" style="width:0%"></div></div>
+    <span class="voice-duration">0:00</span>`;
+
+  let audio = null;
+  div.querySelector('.voice-play-btn').addEventListener('click', (e) => {
+    if (!audio) {
+      audio = new Audio(msg.file_url);
+      audio.addEventListener('timeupdate', () => {
+        const pct = audio.currentTime / (audio.duration || 1) * 100;
+        div.querySelector('.voice-progress').style.width = pct + '%';
+        div.querySelector('.voice-duration').textContent = formatDuration(audio.currentTime);
+      });
+      audio.addEventListener('ended', () => {
+        div.querySelector('.voice-progress').style.width = '0%';
+        div.querySelector('.voice-play-btn').innerHTML = playIcon();
+      });
+    }
+    if (audio.paused) {
+      audio.play();
+      div.querySelector('.voice-play-btn').innerHTML = pauseIcon();
+    } else {
+      audio.pause();
+      div.querySelector('.voice-play-btn').innerHTML = playIcon();
+    }
+  });
+  return div;
+}
+
+function playIcon() {
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5,3 19,12 5,21 5,3"/></svg>`;
+}
+function pauseIcon() {
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg>`;
+}
+
+function createFileCard(msg) {
+  const div = document.createElement('div');
+  div.className = 'file-card';
+  div.innerHTML = `
+    <div class="file-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14,2 14,8 20,8"/>
+      </svg>
+    </div>
+    <div class="file-info">
+      <div class="file-name">${escHtml(msg.file_name || 'Файл')}</div>
+      <div class="file-size">${formatSize(msg.file_size)}</div>
+    </div>`;
+  div.addEventListener('click', () => downloadFile(msg.file_url, msg.file_name));
+  return div;
+}
+
+// ── Append single message ─────────────────────
+function appendMessage(msg) {
+  // Remove empty state if present
+  const es = $list.querySelector('.empty-state');
+  if (es) es.remove();
+
+  const messages_before = $list.querySelectorAll('.message-wrap');
+  const lastWrap = messages_before[messages_before.length - 1];
+  const lastDate = lastWrap ? new Date(messages.find(m => String(m.id) === lastWrap.dataset.id)?.created_at || 0).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : null;
+  const thisDate = new Date(msg.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  if (thisDate !== lastDate) $list.appendChild(createDateSep(thisDate));
+  $list.appendChild(createMessageEl(msg));
+}
+
+// ── AI Streaming ──────────────────────────────
+function handleAIChunk(chunk) {
+  if (!aiStreamEl) {
+    // Remove typing indicator
+    const ti = $list.querySelector('.typing-indicator');
+    if (ti) ti.remove();
+
+    // Create streaming message element
+    aiStreamBuffer = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'message-wrap other';
+    wrap.dataset.id = 'ai-stream';
+    const lbl = document.createElement('div');
+    lbl.className = 'message-group-label';
+    lbl.textContent = 'ИИ-Советник';
+    wrap.appendChild(lbl);
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    aiStreamEl = document.createElement('span');
+    aiStreamEl.style.whiteSpace = 'pre-wrap';
+    bubble.appendChild(aiStreamEl);
+    wrap.appendChild(bubble);
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
+    meta.innerHTML = `<span class="message-time">${formatTime(new Date().toISOString())}</span>`;
+    wrap.appendChild(meta);
+    $list.appendChild(wrap);
+  }
+  aiStreamBuffer += chunk;
+  aiStreamEl.textContent = aiStreamBuffer;
+  scrollToBottom(true);
+}
+
+function finalizeAIMessage(data) {
+  // Replace streaming element with real message
+  const streamEl = $list.querySelector('[data-id="ai-stream"]');
+  if (streamEl) streamEl.remove();
+  aiStreamEl = null;
+  aiStreamBuffer = '';
+  messages.push(data);
+  appendMessage(data);
+  scrollToBottom(true);
+}
+
+// ── Typing indicator ──────────────────────────
+let typingTimeout;
+function showTypingIndicator() {
+  let ti = $list.querySelector('.typing-indicator');
+  if (!ti) {
+    ti = document.createElement('div');
+    ti.className = 'typing-indicator';
+    ti.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+    $list.appendChild(ti);
+    scrollToBottom(true);
+  }
+  clearTimeout(typingTimeout);
+  typingTimeout = setTimeout(() => ti?.remove(), 3000);
+}
+
+// ── Send message ──────────────────────────────
+async function sendMessage() {
+  const text = $input.value.trim();
+  if (!text && !editingMessageId) return;
+
+  if (editingMessageId) {
+    await submitEdit(text);
+    return;
+  }
+
+  $input.value = '';
+  autoResize();
+  $sendBtn.disabled = true;
+
+  if (CHAT_TYPE === 'ai') {
+    // Show typing indicator immediately
+    const ti = document.createElement('div');
+    ti.className = 'typing-indicator';
+    ti.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+    $list.appendChild(ti);
+    scrollToBottom(true);
+
+    try {
+      await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: CHAT_ID,
+          user_message: text,
+          user_id: USER_ID_INT,
+        }),
+      });
+    } catch (e) {
+      $list.querySelector('.typing-indicator')?.remove();
+      showToast('Ошибка отправки');
+    }
+  } else {
+    try {
+      await api('POST', '/api/messages/', {
+        chat_id: CHAT_ID,
+        sender_type: 'user',
+        sender_id: USER_ID_INT,
+        sender_name: USER.first_name || 'Пользователь',
+        content: text,
+        message_type: 'text',
+        reply_to_id: replyToMessage?.id || null,
+      });
+      clearReply();
+    } catch (e) {
+      showToast('Ошибка отправки');
+    }
+  }
+
+  // Send typing event via WS
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'typing' }));
+  }
+}
+
+// ── Edit message ──────────────────────────────
+function startEdit(msg) {
+  editingMessageId = msg.id;
+  $input.value = msg.content || '';
+  $input.focus();
+  autoResize();
+  $editBanner.classList.remove('hidden');
+  $editBannerLbl.textContent = 'Редактирование';
+  $editBannerTxt.textContent = msg.content || '';
+  $sendBtn.disabled = false;
+}
+
+async function submitEdit(text) {
+  try {
+    await api('PATCH', `/api/messages/${editingMessageId}`, { content: text });
+    cancelEdit();
+  } catch (e) {
+    showToast('Ошибка редактирования');
+  }
+}
+
+function cancelEdit() {
+  editingMessageId = null;
+  $input.value = '';
+  $editBanner.classList.add('hidden');
+  autoResize();
+}
+
+// ── Reply ────────────────────────────────────
+function startReply(msg) {
+  replyToMessage = msg;
+  $editBanner.classList.remove('hidden');
+  $editBannerLbl.textContent = 'Ответ';
+  $editBannerTxt.textContent = msg.content || '[медиа]';
+  $input.focus();
+}
+
+function clearReply() {
+  replyToMessage = null;
+  if (!editingMessageId) $editBanner.classList.add('hidden');
+}
+
+// ── Delete ────────────────────────────────────
+async function deleteMessage(msgId) {
+  try {
+    await api('DELETE', `/api/messages/${msgId}`);
+  } catch (e) {
+    showToast('Ошибка удаления');
+  }
+}
+
+function markDeleted(msgId) {
+  const wrap = $list.querySelector(`[data-id="${msgId}"]`);
+  if (wrap) {
+    const bubble = wrap.querySelector('.bubble');
+    if (bubble) {
+      bubble.className = 'bubble deleted';
+      bubble.textContent = 'Сообщение удалено';
+    }
+  }
+  const idx = messages.findIndex(m => m.id === msgId);
+  if (idx !== -1) messages[idx].is_deleted = true;
+}
+
+// ── Pin / Unpin ───────────────────────────────
+async function togglePin(msgId) {
+  try {
+    await api('POST', `/api/messages/${msgId}/pin`);
+  } catch (e) {
+    showToast('Ошибка закрепления');
+  }
+}
+
+function updatePinState(data) {
+  const msg = messages.find(m => m.id === data.id);
+  if (msg) msg.is_pinned = data.is_pinned;
+  const wrap = $list.querySelector(`[data-id="${data.id}"]`);
+  if (wrap) {
+    const bubble = wrap.querySelector('.bubble');
+    if (bubble) bubble.classList.toggle('pinned', data.is_pinned);
+  }
+  if (data.is_pinned) {
+    pinnedMessages = pinnedMessages.filter(p => p.id !== data.id);
+    pinnedMessages.unshift(data);
+  } else {
+    pinnedMessages = pinnedMessages.filter(p => p.id !== data.id);
+  }
+  updatePinnedBar();
+}
+
+function updatePinnedBar() {
+  if (pinnedMessages.length > 0) {
+    const p = pinnedMessages[0];
+    $pinnedTxt.textContent = p.content || '[медиа]';
+    $pinnedBar.classList.remove('hidden');
+  } else {
+    $pinnedBar.classList.add('hidden');
+  }
+}
+
+function updateMessage(data) {
+  const msg = messages.find(m => m.id === data.id);
+  if (msg) Object.assign(msg, data);
+  const wrap = $list.querySelector(`[data-id="${data.id}"]`);
+  if (wrap) {
+    const bubble = wrap.querySelector('.bubble');
+    if (bubble) {
+      const txtSpan = bubble.querySelector('span');
+      if (txtSpan) txtSpan.textContent = data.content;
+    }
+    // Update meta
+    const meta = wrap.querySelector('.message-meta');
+    if (meta) {
+      const edited = meta.querySelector('.message-edited');
+      if (!edited) {
+        const ed = document.createElement('span');
+        ed.className = 'message-edited';
+        ed.textContent = '· изм.';
+        meta.appendChild(ed);
+      }
+    }
+  }
+}
+
+// ── Context Menu ──────────────────────────────
+function showContextMenu(e, msgId, isUser, msg) {
+  selectedMessageId = msgId;
+  const cm = $ctxMenu;
+  cm.classList.remove('hidden');
+  $ctxOverlay.classList.remove('hidden');
+
+  // Update pin label
+  document.getElementById('ctxPinText').textContent = msg.is_pinned ? 'Открепить' : 'Закрепить';
+
+  // Show/hide edit & delete for own messages only
+  document.getElementById('ctxEdit').style.display = isUser ? 'flex' : 'none';
+  document.getElementById('ctxDelete').style.display = isUser ? 'flex' : 'none';
+  document.getElementById('ctxCopy').style.display = msg.content ? 'flex' : 'none';
+  document.getElementById('ctxDownload').style.display = msg.file_url ? 'flex' : 'none';
+
+  // Position
+  const x = Math.min(e.clientX || 80, window.innerWidth - 220);
+  const y = Math.min(e.clientY || 300, window.innerHeight - cm.offsetHeight - 20);
+  cm.style.left = x + 'px';
+  cm.style.top = y + 'px';
+}
+
+function hideContextMenu() {
+  $ctxMenu.classList.add('hidden');
+  $ctxOverlay.classList.add('hidden');
+  selectedMessageId = null;
+}
+
+function getSelectedMessage() {
+  return messages.find(m => m.id === selectedMessageId);
+}
+
+// ── Forward Modal ─────────────────────────────
+function showForwardModal(msgId) {
+  forwardMessageId = msgId;
+  $fwdOpts.innerHTML = '';
+  const icons = {
+    ai:     `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>`,
+    lawyer: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+    match:  `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`,
+  };
+  Object.entries(FORWARD_TARGETS).forEach(([type, info]) => {
+    const div = document.createElement('div');
+    div.className = `forward-option${type === CHAT_TYPE ? ' current' : ''}`;
+    div.innerHTML = `
+      <div class="forward-option-icon">${icons[type]}</div>
+      <div>
+        <div class="forward-option-name">${info.title}</div>
+        <div class="forward-option-desc">${info.desc}</div>
+      </div>`;
+    if (type !== CHAT_TYPE) {
+      div.addEventListener('click', () => forwardMessage(type));
+    }
+    $fwdOpts.appendChild(div);
+  });
+  $fwdModal.classList.remove('hidden');
+}
+
+async function forwardMessage(targetType) {
+  const msg = messages.find(m => m.id === forwardMessageId);
+  if (!msg) return;
+  $fwdModal.classList.add('hidden');
+
+  try {
+    const userRes = await api('POST', '/api/users/', {
+      telegram_id: USER_ID_INT,
+      username: USER.username,
+      first_name: USER.first_name,
+      last_name: USER.last_name,
+    });
+    const chatRes = await api('POST', '/api/chats/', {
+      user_id: userRes.id,
+      chat_type: targetType,
+    });
+    await api('POST', '/api/messages/', {
+      chat_id: chatRes.id,
+      sender_type: 'user',
+      sender_id: USER_ID_INT,
+      content: msg.content,
+      message_type: msg.message_type,
+      file_url: msg.file_url,
+      file_name: msg.file_name,
+      file_size: msg.file_size,
+      forwarded_from_chat_type: CHAT_TYPE,
+    });
+    showToast('Сообщение переслано');
+  } catch (e) {
+    showToast('Ошибка пересылки');
+  }
+}
+
+// ── File upload ───────────────────────────────
+async function uploadAndSend(file, type) {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    await api('POST', '/api/messages/', {
+      chat_id: CHAT_ID,
+      sender_type: 'user',
+      sender_id: USER_ID_INT,
+      sender_name: USER.first_name || 'Пользователь',
+      message_type: data.message_type,
+      file_url: data.file_url,
+      file_name: data.file_name,
+      file_size: data.file_size,
+      reply_to_id: replyToMessage?.id || null,
+    });
+    clearReply();
+  } catch (e) {
+    showToast('Ошибка загрузки файла');
+  }
+}
+
+// ── Voice recording ───────────────────────────
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        await api('POST', '/api/messages/', {
+          chat_id: CHAT_ID,
+          sender_type: 'user',
+          sender_id: USER_ID_INT,
+          message_type: 'voice',
+          file_url: data.file_url,
+          file_name: data.file_name,
+          file_size: data.file_size,
+        });
+      } catch { showToast('Ошибка отправки голосового'); }
+    };
+    mediaRecorder.start();
+    isRecording = true;
+    $voiceBtn.classList.add('recording');
+  } catch {
+    showToast('Нет доступа к микрофону');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    isRecording = false;
+    $voiceBtn.classList.remove('recording');
+  }
+}
+
+// ── Image viewer ──────────────────────────────
+function openImageViewer(url) {
+  $imgViewerImg.src = url;
+  $imgViewer.classList.remove('hidden');
+}
+
+// ── Helpers ───────────────────────────────────
+function scrollToBottom(smooth) {
+  $list.scrollTo({ top: $list.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
+}
+
+function formatTime(iso) {
+  return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDuration(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' КБ';
+  return (bytes / 1048576).toFixed(1) + ' МБ';
+}
+
+function truncate(str, n) {
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function downloadFile(url, name) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || 'file';
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+let toastTimer;
+function showToast(msg) {
+  $toast.textContent = msg;
+  $toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $toast.classList.remove('show'), 2500);
+}
+
+function autoResize() {
+  $input.style.height = 'auto';
+  $input.style.height = Math.min($input.scrollHeight, 100) + 'px';
+}
+
+// ── Event listeners ───────────────────────────
+$backBtn.addEventListener('click', () => {
+  if (tg) tg.close();
+  else history.back();
+});
+
+$input.addEventListener('input', () => {
+  autoResize();
+  $sendBtn.disabled = !$input.value.trim() && !editingMessageId;
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'typing' }));
+  }
+});
+
+$input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+$sendBtn.addEventListener('click', sendMessage);
+
+$editBannerClose.addEventListener('click', () => {
+  if (editingMessageId) cancelEdit();
+  else clearReply();
+});
+
+$attachBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  $attachMenu.classList.toggle('hidden');
+});
+
+document.addEventListener('click', () => $attachMenu.classList.add('hidden'));
+
+document.getElementById('attachImage').addEventListener('click', () => {
+  document.getElementById('fileInputImage').click();
+  $attachMenu.classList.add('hidden');
+});
+document.getElementById('attachAudio').addEventListener('click', () => {
+  document.getElementById('fileInputAudio').click();
+  $attachMenu.classList.add('hidden');
+});
+document.getElementById('attachFile').addEventListener('click', () => {
+  document.getElementById('fileInputFile').click();
+  $attachMenu.classList.add('hidden');
+});
+
+document.getElementById('fileInputImage').addEventListener('change', (e) => {
+  if (e.target.files[0]) uploadAndSend(e.target.files[0]);
+});
+document.getElementById('fileInputAudio').addEventListener('change', (e) => {
+  if (e.target.files[0]) uploadAndSend(e.target.files[0], 'audio');
+});
+document.getElementById('fileInputFile').addEventListener('change', (e) => {
+  if (e.target.files[0]) uploadAndSend(e.target.files[0], 'document');
+});
+
+// Voice recording
+$voiceBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); }, { passive: false });
+$voiceBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); }, { passive: false });
+$voiceBtn.addEventListener('mousedown', startRecording);
+$voiceBtn.addEventListener('mouseup', stopRecording);
+
+// Context menu actions
+$ctxOverlay.addEventListener('click', hideContextMenu);
+
+document.getElementById('ctxPin').addEventListener('click', () => {
+  if (selectedMessageId) togglePin(selectedMessageId);
+  hideContextMenu();
+});
+
+document.getElementById('ctxReply').addEventListener('click', () => {
+  const msg = getSelectedMessage();
+  if (msg) startReply(msg);
+  hideContextMenu();
+});
+
+document.getElementById('ctxEdit').addEventListener('click', () => {
+  const msg = getSelectedMessage();
+  if (msg) startEdit(msg);
+  hideContextMenu();
+});
+
+document.getElementById('ctxCopy').addEventListener('click', () => {
+  const msg = getSelectedMessage();
+  if (msg?.content) {
+    navigator.clipboard.writeText(msg.content).then(() => showToast('Скопировано'));
+  }
+  hideContextMenu();
+});
+
+document.getElementById('ctxDownload').addEventListener('click', () => {
+  const msg = getSelectedMessage();
+  if (msg?.file_url) downloadFile(msg.file_url, msg.file_name);
+  hideContextMenu();
+});
+
+document.getElementById('ctxForward').addEventListener('click', () => {
+  const id = selectedMessageId;
+  hideContextMenu();
+  if (id) showForwardModal(id);
+});
+
+document.getElementById('ctxDelete').addEventListener('click', () => {
+  const id = selectedMessageId;
+  hideContextMenu();
+  if (id) deleteMessage(id);
+});
+
+$fwdCancel.addEventListener('click', () => $fwdModal.classList.add('hidden'));
+$fwdModal.addEventListener('click', (e) => { if (e.target === $fwdModal) $fwdModal.classList.add('hidden'); });
+
+$imgViewerClose.addEventListener('click', () => $imgViewer.classList.add('hidden'));
+$imgViewer.addEventListener('click', (e) => { if (e.target === $imgViewer) $imgViewer.classList.add('hidden'); });
+
+$pinnedBar.addEventListener('click', () => {
+  if (pinnedMessages.length > 0) {
+    const wrap = $list.querySelector(`[data-id="${pinnedMessages[0].id}"]`);
+    wrap?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+});
+
+// ── Start ─────────────────────────────────────
+init();
