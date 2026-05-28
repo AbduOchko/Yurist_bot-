@@ -92,10 +92,10 @@ document.querySelectorAll('.nav-item, .mobile-nav-btn').forEach(item => {
   item.addEventListener('click', () => switchPanel(item.dataset.panel));
 });
 
-// Show mobile nav if screen is small or inside Telegram WebApp
+// Apply mobile-mode class when inside Telegram WebApp or on narrow screen
 function updateLayout() {
-  const isMobile = window.innerWidth <= 600 || window.Telegram?.WebApp?.initData;
-  document.getElementById('mobileNav').style.display = isMobile ? 'flex' : 'none';
+  const isMobile = !!(window.Telegram?.WebApp?.initData) || window.innerWidth < 900;
+  document.body.classList.toggle('mobile-mode', isMobile);
 }
 updateLayout();
 window.addEventListener('resize', updateLayout);
