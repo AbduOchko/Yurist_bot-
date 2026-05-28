@@ -2,9 +2,25 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
   <title>Юрист Бот — Админ</title>
   <link rel="stylesheet" href="/admin/css/admin.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    // Disable pinch zoom
+    document.addEventListener('touchmove', function(e) {
+      if (e.touches.length > 1) e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('gesturestart', function(e) { e.preventDefault(); }, { passive: false });
+    // Init Telegram WebApp
+    const tgAdmin = window.Telegram?.WebApp;
+    if (tgAdmin) {
+      tgAdmin.ready();
+      tgAdmin.expand();
+      try { tgAdmin.setHeaderColor('#000000'); } catch(e) {}
+      try { tgAdmin.setBackgroundColor('#000000'); } catch(e) {}
+    }
+  </script>
 </head>
 <body>
 
@@ -223,6 +239,42 @@
 
   </div>
 </div>
+
+<!-- Mobile bottom navigation (shown only on small screens / Telegram WebApp) -->
+<nav class="mobile-nav" id="mobileNav" style="display:none">
+  <button class="mobile-nav-btn active" data-panel="dashboard">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+    </svg>
+    Дашборд
+  </button>
+  <button class="mobile-nav-btn" data-panel="lawyer-chats">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+    </svg>
+    Юрист
+  </button>
+  <button class="mobile-nav-btn" data-panel="match-chats">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+    </svg>
+    Подбор
+  </button>
+  <button class="mobile-nav-btn" data-panel="ai-chats">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+    </svg>
+    ИИ-Чаты
+  </button>
+  <button class="mobile-nav-btn" data-panel="users">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+    Польз.
+  </button>
+</nav>
 
 <!-- Toast -->
 <div class="admin-toast" id="adminToast"></div>

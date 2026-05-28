@@ -26,16 +26,13 @@ async def cmd_start(message: Message):
         )
 
     webapp_url = settings.WEBAPP_URL.rstrip("/")
-
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⚖️ Открыть Юрист Бот",
-                    web_app=WebAppInfo(url=webapp_url),
-                )
-            ]
-        ]
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="⚖️ Открыть Юрист Бот",
+                web_app=WebAppInfo(url=webapp_url),
+            )
+        ]]
     )
 
     name = message.from_user.first_name or "Пользователь"
@@ -43,7 +40,6 @@ async def cmd_start(message: Message):
         f"👋 Добро пожаловать, {name}!\n\n"
         "⚖️ <b>Юрист Бот</b> — ваш персональный правовой помощник.\n\n"
         "Нажмите кнопку ниже, чтобы открыть приложение:",
-        parse_mode="HTML",
         reply_markup=keyboard,
     )
 
@@ -58,5 +54,30 @@ async def cmd_help(message: Message):
         "🤖 <b>ИИ-Советник</b> — мгновенные юридические консультации от ИИ\n"
         "👨‍💼 <b>Личный Юрист</b> — чат с живым юристом\n"
         "🔍 <b>Подбор Юриста</b> — помощь в поиске специалиста",
-        parse_mode="HTML",
+    )
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    user_id = message.from_user.id
+
+    # Only allow configured admins
+    if user_id not in settings.admin_ids_list:
+        await message.answer("⛔️ У вас нет доступа к панели администратора.")
+        return
+
+    admin_url = settings.WEBAPP_URL.rstrip("/") + "/admin/"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="🛠 Открыть Панель Администратора",
+                web_app=WebAppInfo(url=admin_url),
+            )
+        ]]
+    )
+
+    await message.answer(
+        "🛠 <b>Панель администратора</b>\n\n"
+        "Нажмите кнопку ниже для входа в панель управления:",
+        reply_markup=keyboard,
     )

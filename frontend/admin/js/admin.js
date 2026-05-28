@@ -79,16 +79,26 @@ function onAdminReady() {
   }, 15000);
 }
 
-// ── Navigation ────────────────────────────────
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', () => {
-    const panel = item.dataset.panel;
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    item.classList.add('active');
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    document.getElementById(`panel-${panel}`)?.classList.add('active');
-  });
+// ── Navigation (sidebar + mobile bottom nav) ──
+function switchPanel(panel) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.mobile-nav-btn').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll(`[data-panel="${panel}"]`).forEach(n => n.classList.add('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`panel-${panel}`)?.classList.add('active');
+}
+
+document.querySelectorAll('.nav-item, .mobile-nav-btn').forEach(item => {
+  item.addEventListener('click', () => switchPanel(item.dataset.panel));
 });
+
+// Show mobile nav if screen is small or inside Telegram WebApp
+function updateLayout() {
+  const isMobile = window.innerWidth <= 600 || window.Telegram?.WebApp?.initData;
+  document.getElementById('mobileNav').style.display = isMobile ? 'flex' : 'none';
+}
+updateLayout();
+window.addEventListener('resize', updateLayout);
 
 // ── Stats ─────────────────────────────────────
 async function loadStats() {
