@@ -1,8 +1,8 @@
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from app.bot.handlers import start
 from app.config import settings
@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 def create_bot() -> Bot:
-    return Bot(token=settings.BOT_TOKEN, parse_mode=ParseMode.HTML)
+    return Bot(
+        token=settings.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
 def create_dispatcher() -> Dispatcher:
