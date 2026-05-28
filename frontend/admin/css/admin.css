@@ -53,7 +53,7 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
 
-/* ── MOBILE NAV (always defined, shown/hidden via JS class on body) ── */
+/* ── MOBILE NAV — hidden by default, shown via body.mobile-mode class ── */
 .mobile-nav {
   display: none;
   position: fixed;
@@ -94,7 +94,7 @@ body {
 
 /* ── MOBILE MODE (class added by JS when inside Telegram or narrow screen) ── */
 body.mobile-mode .sidebar { display: none !important; }
-body.mobile-mode .mobile-nav { display: flex; }
+body.mobile-mode .mobile-nav { display: flex !important; }
 body.mobile-mode .admin-layout { height: 100dvh; overflow: hidden; }
 body.mobile-mode .main-content { height: 100%; overflow: hidden; }
 body.mobile-mode .panel {
