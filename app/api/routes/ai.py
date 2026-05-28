@@ -1,9 +1,5 @@
-import json
-from typing import AsyncGenerator
-
-import openai
+from openai import AsyncOpenAI
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +24,15 @@ SYSTEM_PROMPT = """Вы — опытный юрист-консультант с 
 - При необходимости ссылайтесь на конкретные статьи законов РФ"""
 
 
+def get_client() -> AsyncOpenAI:
+    return AsyncOpenAI(
+        api_key=settings.LLMOST_API_KEY,
+        base_url=settings.LLMOST_BASE_URL,
+    )
+
+
 def build_messages(history: list) -> list:
-    msgs = []
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in history[-20:]:
         if m.sender_type == SenderType.user:
             msgs.append({"role": "user", "content": m.content or ""})
@@ -69,30 +72,32 @@ async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
         },
     )
 
-    # Get chat history
+    # Build message history
     history = await crud.get_messages(session, data.chat_id, limit=30)
     messages = build_messages(history)
 
-    # Ensure last message is user's (it should already be)
+    # Ensure last message is user's
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": data.user_message})
 
-    client = openai.OpenAI(api_key=settings.AI_PROVIDER_API_KEY)
-
+    client = get_client()
     full_response = ""
 
-    # Stream AI response via WebSocket
-    with client.messages.stream(
-        model="gpt-4o-mini",
-        max_tokens=2048,
-        system=SYSTEM_PROMPT,
+    # Stream response via WebSocket
+    stream = await client.chat.completions.create(
+        model=settings.LLMOST_MODEL,
         messages=messages,
-    ) as stream:
-        for text_chunk in stream.text_stream:
-            full_response += text_chunk
+        max_tokens=2048,
+        stream=True,
+    )
+
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            full_response += delta
             await manager.broadcast_to_chat(
                 data.chat_id,
-                {"type": "ai_chunk", "content": text_chunk},
+                {"type": "ai_chunk", "content": delta},
             )
 
     # Save complete AI response
