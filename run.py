@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 
 import uvicorn
 from aiogram.types import Update
@@ -29,32 +28,36 @@ async def telegram_webhook(request: Request):
     return JSONResponse({"ok": True})
 
 
-async def main():
+@app.on_event("startup")
+async def on_startup():
+    # Set up Telegram webhook in background — does NOT block the server start
     if settings.WEBHOOK_URL:
-        # Production mode: webhook
+        asyncio.create_task(_setup_webhook_safe())
+
+
+async def _setup_webhook_safe():
+    try:
         await setup_webhook(bot)
-        config = uvicorn.Config(
-            app,
-            host=settings.HOST,
-            port=settings.PORT,
-            log_level="info",
-        )
-        server = uvicorn.Server(config)
+    except Exception as e:
+        logger.warning(f"Webhook setup failed (bot will still work via polling): {e}")
+
+
+async def main():
+    config = uvicorn.Config(
+        app,
+        host=settings.HOST,
+        port=settings.PORT,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
+
+    if settings.WEBHOOK_URL:
+        # Production: just run uvicorn; webhook is set up in startup event
         await server.serve()
     else:
-        # Development mode: polling + uvicorn
-        async def run_uvicorn():
-            config = uvicorn.Config(
-                app,
-                host=settings.HOST,
-                port=settings.PORT,
-                log_level="info",
-            )
-            server = uvicorn.Server(config)
-            await server.serve()
-
+        # Development: run uvicorn + polling together
         await asyncio.gather(
-            run_uvicorn(),
+            server.serve(),
             start_polling(bot, dp),
         )
 

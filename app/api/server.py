@@ -43,8 +43,8 @@ app.include_router(ws.router)
 uploads_path = Path("uploads")
 uploads_path.mkdir(exist_ok=True)
 
-# Serve frontend static files
-frontend_path = Path(__file__).parent.parent / "frontend"
+# Serve frontend static files (project_root/frontend)
+frontend_path = Path(__file__).parent.parent.parent / "frontend"
 if frontend_path.exists():
     app.mount("/admin", StaticFiles(directory=str(frontend_path / "admin"), html=True), name="admin")
     app.mount("/", StaticFiles(directory=str(frontend_path / "webapp"), html=True), name="webapp")
