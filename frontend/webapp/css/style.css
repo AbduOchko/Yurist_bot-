@@ -40,6 +40,14 @@
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
+  /* Disable text selection zoom on double-tap */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html {
+  /* Prevent pinch-zoom at CSS level */
+  touch-action: pan-x pan-y;
 }
 
 html, body {
