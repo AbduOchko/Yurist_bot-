@@ -421,7 +421,8 @@ function renderContent(msg, isUser) {
     frag.appendChild(span);
   }
 
-  if (msg.content && msg.message_type !== 'text' && msg.message_type !== 'system') {
+  // Show caption only for media that has real text (not voice duration)
+  if (msg.content && msg.message_type !== 'text' && msg.message_type !== 'system' && msg.message_type !== 'voice') {
     const cap = document.createElement('div');
     cap.style.cssText = 'margin-top:6px;font-size:14px;';
     cap.textContent = msg.content;
@@ -431,112 +432,134 @@ function renderContent(msg, isUser) {
   return frag;
 }
 
-// Global registry of active voice players so we can stop others
+// Global registry of active voice players
 const _activePlayers = new Set();
 
 function createVoicePlayer(msg, isUser) {
-  // Duration stored in content field when recorded
   const storedSec = msg.content && !isNaN(parseFloat(msg.content))
-    ? parseFloat(msg.content)
-    : null;
+    ? parseFloat(msg.content) : null;
 
-  const initDuration = storedSec ? formatDuration(storedSec) : '0:00';
+  const initLabel = storedSec ? formatDuration(storedSec) : '0:00';
 
   const div = document.createElement('div');
   div.className = 'voice-player';
   div.innerHTML = `
-    <button class="voice-play-btn">
-      ${playIcon()}
-    </button>
+    <button class="voice-play-btn">${playIcon()}</button>
     <div class="voice-waveform"><div class="voice-progress" style="width:0%"></div></div>
-    <span class="voice-duration">${initDuration}</span>`;
+    <span class="voice-duration">${initLabel}</span>`;
 
   const $btn      = div.querySelector('.voice-play-btn');
   const $progress = div.querySelector('.voice-progress');
-  const $duration = div.querySelector('.voice-duration');
+  const $dur      = div.querySelector('.voice-duration');
 
-  let audio = null;
+  let audio     = null;
+  let objectUrl = null;
+  let ready     = false;   // true once blob URL is prepared
+  let playing   = false;
 
-  function buildAudio() {
-    audio = new Audio(msg.file_url);
-    audio.preload = 'metadata';
+  // ── Prepare: convert data URL → blob → object URL (fast, local) ──
+  // Done as soon as the player renders so audio is ready before first tap.
+  function prepare() {
+    if (ready || !msg.file_url) return;
+    fetch(msg.file_url)
+      .then(r => r.blob())
+      .then(blob => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(blob);
+        audio = new Audio(objectUrl);
 
-    audio.addEventListener('loadedmetadata', () => {
-      // WebM from MediaRecorder often returns Infinity — use stored duration instead
-      if (audio.duration && isFinite(audio.duration) && audio.duration > 0.1) {
-        $duration.textContent = formatDuration(audio.duration);
-      } else if (storedSec) {
-        $duration.textContent = formatDuration(storedSec);
-      }
-    });
+        audio.addEventListener('loadedmetadata', () => {
+          const d = audio.duration;
+          if (d && isFinite(d) && d > 0.1) {
+            $dur.textContent = formatDuration(d);
+          } else if (storedSec) {
+            $dur.textContent = formatDuration(storedSec);
+          }
+        });
 
-    audio.addEventListener('timeupdate', () => {
-      if (!audio.duration) return;
-      const pct = (audio.currentTime / audio.duration) * 100;
-      $progress.style.width = pct + '%';
-      $duration.textContent = formatDuration(audio.currentTime);
-    });
+        audio.addEventListener('timeupdate', () => {
+          const total = audio.duration || storedSec || 1;
+          $progress.style.width = (audio.currentTime / total * 100) + '%';
+          $dur.textContent = formatDuration(audio.currentTime);
+        });
 
-    audio.addEventListener('ended', () => {
-      $progress.style.width = '0%';
-      $btn.innerHTML = playIcon();
-      _activePlayers.delete(stop);
-      // Fully reload so next play() works on iOS
-      audio.load();
-      if (audio.duration && isFinite(audio.duration)) {
-        $duration.textContent = formatDuration(audio.duration);
-      } else {
-        $duration.textContent = '0:00';
-      }
-    });
+        audio.addEventListener('ended', () => {
+          playing = false;
+          $btn.innerHTML = playIcon();
+          $progress.style.width = '0%';
+          $dur.textContent = storedSec ? formatDuration(storedSec) : '0:00';
+          _activePlayers.delete(stopThis);
+          audio.load(); // reset for replay
+        });
 
-    audio.addEventListener('error', () => {
-      $btn.innerHTML = playIcon();
-      _activePlayers.delete(stop);
-    });
+        audio.addEventListener('error', () => {
+          playing = false;
+          $btn.innerHTML = playIcon();
+          _activePlayers.delete(stopThis);
+        });
+
+        ready = true;
+      })
+      .catch(() => {
+        // Fallback: use data URL directly (less reliable on iOS but better than nothing)
+        audio = new Audio(msg.file_url);
+        ready = true;
+      });
   }
 
-  function stop() {
-    if (audio && !audio.paused) {
-      audio.pause();
-      $btn.innerHTML = playIcon();
-    }
+  prepare(); // start immediately
+
+  function stopThis() {
+    if (!audio || audio.paused) return;
+    audio.pause();
+    playing = false;
+    $btn.innerHTML = playIcon();
   }
 
+  // ── Click handler: MUST call play() synchronously (iOS policy) ──
   $btn.addEventListener('click', () => {
-    if (!audio) buildAudio();
+    if (!msg.file_url) { showToast('Файл недоступен'); return; }
 
-    if (!audio.paused) {
-      // Currently playing → pause
-      audio.pause();
-      $btn.innerHTML = playIcon();
-      _activePlayers.delete(stop);
+    // Pause → stop
+    if (playing) {
+      stopThis();
+      _activePlayers.delete(stopThis);
       return;
     }
 
-    // Stop all other active players
+    // Stop all others
     _activePlayers.forEach(fn => fn());
     _activePlayers.clear();
 
-    // Play
-    const promise = audio.play();
-    if (promise !== undefined) {
-      promise
-        .then(() => {
-          $btn.innerHTML = pauseIcon();
-          _activePlayers.add(stop);
-        })
-        .catch(() => {
-          // iOS autoplay policy — rebuild and retry once
-          buildAudio();
-          audio.play().then(() => {
-            $btn.innerHTML = pauseIcon();
-            _activePlayers.add(stop);
-          }).catch(() => {});
-        });
+    if (!ready || !audio) {
+      // Not loaded yet — show loading, user should tap again in a moment
+      $btn.innerHTML = `<div class="loading-spinner" style="width:14px;height:14px;border-width:2px"></div>`;
+      prepare();
+      setTimeout(() => {
+        if (!playing) $btn.innerHTML = playIcon();
+      }, 3000);
+      return;
+    }
+
+    // play() must be called here, synchronously in the click handler
+    const p = audio.play();
+    if (p !== undefined) {
+      p.then(() => {
+        playing = true;
+        $btn.innerHTML = pauseIcon();
+        _activePlayers.add(stopThis);
+      }).catch(err => {
+        playing = false;
+        $btn.innerHTML = playIcon();
+        // Last resort: recreate audio and let user tap again
+        ready = false;
+        prepare();
+        showToast('Нажмите ещё раз');
+      });
     } else {
+      playing = true;
       $btn.innerHTML = pauseIcon();
-      _activePlayers.add(stop);
+      _activePlayers.add(stopThis);
     }
   });
 
