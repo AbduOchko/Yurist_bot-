@@ -3,8 +3,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import admin, ai, auth, chats, files, messages, users, ws
 
@@ -36,6 +38,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Pydantic validation error messages in Russian
+_VALIDATION_MESSAGES = {
+    "missing": "Обязательное поле не заполнено",
+    "string_pattern_mismatch": "Недопустимые символы в логине",
+    "string_too_short": "Слишком короткое значение",
+    "string_too_long": "Слишком длинное значение",
+    "value_error": "Неверное значение",
+    "int_parsing": "Ожидается число",
+    "greater_than": "Значение слишком маленькое",
+    "less_than": "Значение слишком большое",
+}
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    err_type = first.get("type", "")
+    msg = _VALIDATION_MESSAGES.get(err_type, "Проверьте правильность введённых данных")
+    return JSONResponse(status_code=422, content={"detail": msg})
 
 
 @app.get("/health")

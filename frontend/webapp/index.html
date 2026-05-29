@@ -122,7 +122,7 @@
       </div>
 
       <!-- Login Form -->
-      <div class="auth-form" id="formLogin">
+      <form class="auth-form" id="formLogin" novalidate>
         <div class="auth-field">
           <div class="auth-field-label">Логин</div>
           <div class="auth-input-wrap">
@@ -159,10 +159,10 @@
         <div class="auth-switch">
           Нет аккаунта? <button onclick="switchToRegister()">Зарегистрироваться</button>
         </div>
-      </div>
+      </form>
 
       <!-- Register Form -->
-      <div class="auth-form hidden" id="formRegister">
+      <form class="auth-form hidden" id="formRegister" novalidate>
         <div class="auth-field">
           <div class="auth-field-label">Придумайте логин</div>
           <div class="auth-input-wrap">
@@ -213,7 +213,7 @@
         <div class="auth-switch">
           Уже есть аккаунт? <button onclick="switchToLogin()">Войти</button>
         </div>
-      </div>
+      </form>
 
     </div>
   </div>

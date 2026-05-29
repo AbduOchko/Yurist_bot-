@@ -65,8 +65,32 @@ async function apiAuth(path, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || 'Ошибка сервера');
+
+  let data;
+  try { data = await res.json(); } catch { data = {}; }
+
+  if (!res.ok) {
+    let msg = 'Ошибка сервера. Попробуйте позже.';
+    if (data.detail) {
+      if (typeof data.detail === 'string') {
+        msg = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // Pydantic v2 validation error list — translate to Russian
+        const first = data.detail[0] || {};
+        const type = first.type || '';
+        const RU = {
+          'string_pattern_mismatch': 'Логин содержит недопустимые символы. Используйте только буквы, цифры и _',
+          'string_too_short':  'Слишком короткое значение',
+          'string_too_long':   'Слишком длинное значение',
+          'missing':           'Заполните все обязательные поля',
+          'value_error':       'Неверное значение',
+          'int_parsing':       'Ожидается числовое значение',
+        };
+        msg = RU[type] || 'Проверьте правильность введённых данных';
+      }
+    }
+    throw new Error(msg);
+  }
   return data;
 }
 
