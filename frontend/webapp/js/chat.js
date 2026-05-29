@@ -251,7 +251,24 @@ function handleWSMessage(data) {
     case 'typing':
       if (data.user_id !== USER_ID_INT) showTypingIndicator();
       break;
+
+    case 'voice_transcript':
+      showVoiceTranscript(data.message_id, data.content);
+      break;
   }
+}
+
+// Show recognized speech text under a voice message bubble
+function showVoiceTranscript(messageId, text) {
+  const wrap = $list.querySelector(`[data-id="${messageId}"]`);
+  if (!wrap) return;
+  let cap = wrap.querySelector('.voice-transcript');
+  if (!cap) {
+    cap = document.createElement('div');
+    cap.className = 'voice-transcript';
+    wrap.querySelector('.bubble')?.appendChild(cap);
+  }
+  cap.textContent = text;
 }
 
 // ── Render all messages ───────────────────────
@@ -999,6 +1016,28 @@ async function uploadAndSend(file) {
 
     if (!dataUrl) { showToast('Не удалось обработать файл'); return; }
 
+    // In AI chat: images go to AI for vision analysis
+    if (CHAT_TYPE === 'ai' && msgType === 'image') {
+      showAITyping();
+      const res = await fetch('/api/ai/media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: CHAT_ID,
+          user_id: USER_ID_INT,
+          message_type: 'image',
+          file_url: dataUrl,
+          file_name: file.name || 'image',
+          file_size: file.size,
+        }),
+      });
+      if (!res.ok) {
+        $list.querySelector('.typing-indicator')?.remove();
+        showToast('Ошибка анализа изображения');
+      }
+      return;
+    }
+
     await api('POST', '/api/messages/', {
       chat_id: CHAT_ID,
       sender_type: 'user',
@@ -1012,8 +1051,19 @@ async function uploadAndSend(file) {
     });
     clearReply();
   } catch (e) {
+    $list.querySelector('.typing-indicator')?.remove();
     showToast('Ошибка отправки файла');
   }
+}
+
+// Show AI typing indicator (reused for media)
+function showAITyping() {
+  $list.querySelector('.typing-indicator')?.remove();
+  const ti = document.createElement('div');
+  ti.className = 'typing-indicator';
+  ti.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+  $list.appendChild(ti);
+  scrollToBottom(true);
 }
 
 // ── Voice recording ───────────────────────────
@@ -1105,6 +1155,30 @@ async function startRecording() {
 
       try {
         const dataUrl = await blobToDataUrl(blob);
+
+        // In AI chat: voice is transcribed and answered by AI
+        if (CHAT_TYPE === 'ai') {
+          showAITyping();
+          const res = await fetch('/api/ai/media', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: CHAT_ID,
+              user_id: USER_ID_INT,
+              message_type: 'voice',
+              file_url: dataUrl,
+              file_name: `voice_${Date.now()}`,
+              file_size: blob.size,
+              duration: durationSec,
+            }),
+          });
+          if (!res.ok) {
+            $list.querySelector('.typing-indicator')?.remove();
+            showToast('Ошибка распознавания голоса');
+          }
+          return;
+        }
+
         await api('POST', '/api/messages/', {
           chat_id: CHAT_ID,
           sender_type: 'user',

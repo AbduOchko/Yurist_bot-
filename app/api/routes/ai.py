@@ -1,4 +1,7 @@
+import base64
+import io
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 from openai import AsyncOpenAI
@@ -8,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.websocket_manager import manager
 from app.config import settings
 from app.db import crud
-from app.db.models import SenderType
+from app.db.models import MessageType, SenderType
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -25,7 +28,9 @@ SYSTEM_PROMPT = """Вы — опытный юрист-консультант с 
 - Рекомендуйте обращаться к живому юристу для сложных дел
 - Сохраняйте профессиональный, но доступный тон
 - Структурируйте ответы с использованием нумерованных списков и абзацев
-- При необходимости ссылайтесь на конкретные статьи законов РФ"""
+- При необходимости ссылайтесь на конкретные статьи законов РФ
+- Если пользователь прислал изображение документа — внимательно изучите его и дайте юридический анализ
+- Если пользователь прислал голосовое сообщение — отвечайте на его суть"""
 
 
 def get_client() -> AsyncOpenAI:
@@ -35,30 +40,132 @@ def get_client() -> AsyncOpenAI:
     )
 
 
-def build_messages(history: list) -> list:
+def build_messages(history: list, current: Optional[dict] = None) -> list:
+    """Build OpenAI messages array from chat history.
+    history items use simple text; `current` may be a rich multimodal message."""
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in history[-20:]:
         if m.sender_type == SenderType.user:
-            msgs.append({"role": "user", "content": m.content or ""})
+            # Skip the very last user msg if we'll replace it with `current`
+            text = m.content or ""
+            if m.message_type == MessageType.voice:
+                text = m.content or "[голосовое сообщение]"
+            elif m.message_type == MessageType.image:
+                text = m.content or "[изображение]"
+            msgs.append({"role": "user", "content": text})
         elif m.sender_type == SenderType.ai:
             msgs.append({"role": "assistant", "content": m.content or ""})
+
+    if current:
+        # Replace last user message with the rich multimodal version
+        if msgs and msgs[-1]["role"] == "user":
+            msgs[-1] = current
+        else:
+            msgs.append(current)
     return msgs
 
 
+async def transcribe_voice(client: AsyncOpenAI, data_url: str) -> Optional[str]:
+    """Transcribe a base64 audio data URL via Whisper."""
+    try:
+        if "," not in data_url:
+            return None
+        header, b64 = data_url.split(",", 1)
+        audio_bytes = base64.b64decode(b64)
+
+        # Detect extension from mime
+        ext = "webm"
+        if "mp4" in header or "m4a" in header:
+            ext = "mp4"
+        elif "ogg" in header:
+            ext = "ogg"
+        elif "mpeg" in header or "mp3" in header:
+            ext = "mp3"
+        elif "wav" in header:
+            ext = "wav"
+
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = f"voice.{ext}"
+
+        transcript = await client.audio.transcriptions.create(
+            model=settings.LLMOST_WHISPER_MODEL,
+            file=audio_file,
+            language="ru",
+        )
+        return transcript.text.strip() if transcript and transcript.text else None
+    except Exception as e:
+        logger.error(f"Whisper transcription error: {type(e).__name__}: {e}")
+        return None
+
+
+async def _send_error(chat_id: int, text: str):
+    await manager.broadcast_to_chat(chat_id, {"type": "ai_error", "content": text})
+
+
+async def _stream_and_save(session, chat_id: int, messages: list):
+    """Stream AI completion via WebSocket and save final message."""
+    client = get_client()
+    full_response = ""
+    try:
+        stream = await client.chat.completions.create(
+            model=settings.LLMOST_MODEL,
+            messages=messages,
+            max_tokens=2048,
+            stream=True,
+            timeout=90,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                full_response += delta
+                await manager.broadcast_to_chat(chat_id, {"type": "ai_chunk", "content": delta})
+    except Exception as e:
+        logger.error(f"AI streaming error: {type(e).__name__}: {e}")
+        await _send_error(chat_id, "ИИ-советник временно недоступен. Попробуйте позже.")
+        return None
+
+    if not full_response:
+        await _send_error(chat_id, "ИИ не вернул ответ. Попробуйте переформулировать.")
+        return None
+
+    ai_msg = await crud.create_message(
+        session,
+        chat_id=chat_id,
+        sender_type=SenderType.ai,
+        content=full_response,
+        sender_name="ИИ-Советник",
+    )
+    await manager.broadcast_to_chat(
+        chat_id,
+        {
+            "type": "ai_done",
+            "id": ai_msg.id,
+            "chat_id": chat_id,
+            "sender_type": "ai",
+            "sender_name": "ИИ-Советник",
+            "content": full_response,
+            "message_type": "text",
+            "created_at": ai_msg.created_at.isoformat(),
+        },
+    )
+    return ai_msg
+
+
+# ─────────────────────────────────────────────
+# TEXT CHAT
+# ─────────────────────────────────────────────
 class AIChatIn(BaseModel):
     chat_id: int
     user_message: str
     user_id: int
 
 
-async def _send_error(chat_id: int, text: str):
-    """Send an error message to the chat via WebSocket so the client clears the typing indicator."""
-    await manager.broadcast_to_chat(chat_id, {"type": "ai_error", "content": text})
-
-
 @router.post("/chat")
 async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
-    # Save and broadcast user message
+    if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
+        await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
+        return {"ok": False, "error": "api_key_missing"}
+
     user_msg = await crud.create_message(
         session,
         chat_id=data.chat_id,
@@ -66,7 +173,6 @@ async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
         content=data.user_message,
         sender_id=data.user_id,
     )
-
     await manager.broadcast_to_chat(
         data.chat_id,
         {
@@ -80,70 +186,108 @@ async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
         },
     )
 
-    # Check API key
-    if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
-        logger.error("LLMOST_API_KEY is not configured")
-        await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
-        return {"ok": False, "error": "api_key_missing"}
-
-    # Build history
     history = await crud.get_messages(session, data.chat_id, limit=30)
     messages = build_messages(history)
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": data.user_message})
 
+    ai_msg = await _stream_and_save(session, data.chat_id, messages)
+    return {"ok": bool(ai_msg)}
+
+
+# ─────────────────────────────────────────────
+# MEDIA CHAT (image / voice)
+# ─────────────────────────────────────────────
+class AIMediaIn(BaseModel):
+    chat_id: int
+    user_id: int
+    message_type: str          # "image" | "voice"
+    file_url: str              # base64 data URL
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    caption: Optional[str] = None
+    duration: Optional[int] = None   # voice duration in seconds
+
+
+@router.post("/media")
+async def ai_media(data: AIMediaIn, session: AsyncSession = Depends(get_session)):
+    if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
+        await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
+        return {"ok": False, "error": "api_key_missing"}
+
     client = get_client()
-    full_response = ""
+    mtype = MessageType.image if data.message_type == "image" else MessageType.voice
 
-    try:
-        stream = await client.chat.completions.create(
-            model=settings.LLMOST_MODEL,
-            messages=messages,
-            max_tokens=2048,
-            stream=True,
-            timeout=60,
-        )
+    # For voice, content holds duration (player convention); for image, the caption
+    stored_content = str(data.duration) if mtype == MessageType.voice and data.duration else data.caption
 
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                full_response += delta
-                await manager.broadcast_to_chat(
-                    data.chat_id,
-                    {"type": "ai_chunk", "content": delta},
-                )
-
-    except Exception as e:
-        logger.error(f"AI streaming error: {type(e).__name__}: {e}")
-        error_text = "ИИ-советник временно недоступен. Попробуйте позже или обратитесь к живому юристу."
-        await _send_error(data.chat_id, error_text)
-        return {"ok": False, "error": str(e)}
-
-    if not full_response:
-        await _send_error(data.chat_id, "ИИ не вернул ответ. Попробуйте переформулировать вопрос.")
-        return {"ok": False, "error": "empty_response"}
-
-    # Save and broadcast AI response
-    ai_msg = await crud.create_message(
+    # ── 1. Save & broadcast the user's media message ──
+    user_msg = await crud.create_message(
         session,
         chat_id=data.chat_id,
-        sender_type=SenderType.ai,
-        content=full_response,
-        sender_name="ИИ-Советник",
+        sender_type=SenderType.user,
+        content=stored_content,
+        message_type=mtype,
+        file_url=data.file_url,
+        file_name=data.file_name,
+        file_size=data.file_size,
+        sender_id=data.user_id,
     )
-
     await manager.broadcast_to_chat(
         data.chat_id,
         {
-            "type": "ai_done",
-            "id": ai_msg.id,
+            "type": "message",
+            "id": user_msg.id,
             "chat_id": data.chat_id,
-            "sender_type": "ai",
-            "sender_name": "ИИ-Советник",
-            "content": full_response,
-            "message_type": "text",
-            "created_at": ai_msg.created_at.isoformat(),
+            "sender_type": "user",
+            "content": stored_content,
+            "message_type": data.message_type,
+            "file_url": data.file_url,
+            "file_name": data.file_name,
+            "file_size": data.file_size,
+            "created_at": user_msg.created_at.isoformat(),
         },
     )
 
-    return {"ok": True, "message_id": ai_msg.id}
+    history = await crud.get_messages(session, data.chat_id, limit=30)
+
+    # ── 2. Build the multimodal "current" message for the AI ──
+    if mtype == MessageType.image:
+        prompt_text = data.caption or (
+            "Изучите это изображение как юрист и дайте подробный анализ. "
+            "Если это документ — разберите его содержание и правовые нюансы."
+        )
+        current = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": data.file_url}},
+            ],
+        }
+        # History's last item is this image msg (content=None) — drop it, use `current`
+        history = [m for m in history if m.id != user_msg.id]
+    else:  # voice → transcribe
+        await manager.broadcast_to_chat(
+            data.chat_id, {"type": "voice_transcript", "message_id": user_msg.id, "content": "Распознаю голос…"}
+        )
+        transcript = await transcribe_voice(client, data.file_url)
+        if not transcript:
+            await _send_error(
+                data.chat_id,
+                "Не удалось распознать голосовое сообщение. Попробуйте отправить текстом."
+            )
+            return {"ok": False, "error": "transcription_failed"}
+
+        # Show what was heard under the voice bubble (live, persisted via reload from edit below is skipped)
+        await manager.broadcast_to_chat(
+            data.chat_id,
+            {"type": "voice_transcript", "message_id": user_msg.id, "content": transcript},
+        )
+        # History's last item is this voice msg (content=duration) — drop it, use transcript
+        history = [m for m in history if m.id != user_msg.id]
+        current = {"role": "user", "content": transcript}
+
+    messages = build_messages(history, current=current)
+
+    ai_msg = await _stream_and_save(session, data.chat_id, messages)
+    return {"ok": bool(ai_msg)}

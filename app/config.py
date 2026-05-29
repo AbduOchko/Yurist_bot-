@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     LLMOST_API_KEY: str = "your_llmost_api_key"
     LLMOST_BASE_URL: str = "https://llmost.ru/api/v1"
     LLMOST_MODEL: str = "openai/gpt-4o"
+    LLMOST_WHISPER_MODEL: str = "openai/whisper-1"
 
     # Admin
     ADMIN_PASSWORD: str = "admin123"
