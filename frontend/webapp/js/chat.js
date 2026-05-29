@@ -375,7 +375,14 @@ function renderContent(msg, isUser) {
     img.src = msg.file_url;
     img.alt = msg.file_name || 'Изображение';
     img.loading = 'lazy';
+    img.draggable = false;
     img.addEventListener('click', () => openImageViewer(msg.file_url));
+    img.addEventListener('error', () => {
+      const broken = document.createElement('div');
+      broken.className = 'bubble-image-broken';
+      broken.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg><span>Изображение недоступно</span>`;
+      img.replaceWith(broken);
+    });
     frag.appendChild(img);
   } else if (msg.message_type === 'video' && msg.file_url) {
     const vid = document.createElement('video');
@@ -423,28 +430,49 @@ function createVoicePlayer(msg, isUser) {
     <div class="voice-waveform"><div class="voice-progress" style="width:0%"></div></div>
     <span class="voice-duration">0:00</span>`;
 
-  let audio = null;
-  div.querySelector('.voice-play-btn').addEventListener('click', (e) => {
-    if (!audio) {
-      audio = new Audio(msg.file_url);
-      audio.addEventListener('timeupdate', () => {
-        const pct = audio.currentTime / (audio.duration || 1) * 100;
-        div.querySelector('.voice-progress').style.width = pct + '%';
-        div.querySelector('.voice-duration').textContent = formatDuration(audio.currentTime);
-      });
-      audio.addEventListener('ended', () => {
-        div.querySelector('.voice-progress').style.width = '0%';
-        div.querySelector('.voice-play-btn').innerHTML = playIcon();
-      });
-    }
-    if (audio.paused) {
-      audio.play();
-      div.querySelector('.voice-play-btn').innerHTML = pauseIcon();
-    } else {
-      audio.pause();
-      div.querySelector('.voice-play-btn').innerHTML = playIcon();
+  const audio = new Audio(msg.file_url);
+  const $btn      = div.querySelector('.voice-play-btn');
+  const $progress = div.querySelector('.voice-progress');
+  const $duration = div.querySelector('.voice-duration');
+
+  audio.addEventListener('timeupdate', () => {
+    const pct = (audio.currentTime / (audio.duration || 1)) * 100;
+    $progress.style.width = pct + '%';
+    $duration.textContent = formatDuration(audio.currentTime);
+  });
+
+  audio.addEventListener('ended', () => {
+    $progress.style.width = '0%';
+    $duration.textContent = '0:00';
+    $btn.innerHTML = playIcon();
+    // Reset so next click replays from start
+    audio.currentTime = 0;
+  });
+
+  audio.addEventListener('loadedmetadata', () => {
+    if (audio.duration && isFinite(audio.duration)) {
+      $duration.textContent = formatDuration(audio.duration);
     }
   });
+
+  $btn.addEventListener('click', () => {
+    if (audio.paused) {
+      // Pause all other voice messages first
+      document.querySelectorAll('.voice-audio-active').forEach(a => {
+        a.pause();
+        a.dispatchEvent(new Event('ended'));
+      });
+      audio.play().catch(() => {});
+      audio._isActive = true;
+      $btn.innerHTML = pauseIcon();
+      $btn.dataset.active = '1';
+    } else {
+      audio.pause();
+      $btn.innerHTML = playIcon();
+      delete $btn.dataset.active;
+    }
+  });
+
   return div;
 }
 
