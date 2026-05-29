@@ -47,6 +47,7 @@ class User(Base):
     app_login = Column(String(50), unique=True, nullable=True, index=True)
     app_password_hash = Column(String(255), nullable=True)
     session_token = Column(String(64), nullable=True, index=True)
+    photo_url = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")

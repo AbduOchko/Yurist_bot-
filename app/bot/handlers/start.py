@@ -1,4 +1,6 @@
-from aiogram import Router
+import logging
+
+from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import (
     InlineKeyboardButton,
@@ -6,16 +8,39 @@ from aiogram.types import (
     Message,
     WebAppInfo,
 )
+from sqlalchemy import select
 
 from app.config import settings
 from app.db.crud import get_or_create_user
+from app.db.models import User
 from app.db.session import async_session_maker
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
+async def _save_user_photo(bot: Bot, telegram_id: int):
+    """Fetch user's Telegram profile photo and store the URL in DB."""
+    try:
+        photos = await bot.get_user_profile_photos(telegram_id, limit=1)
+        if not photos.total_count:
+            return
+        file_id = photos.photos[0][0].file_id
+        file = await bot.get_file(file_id)
+        photo_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{file.file_path}"
+
+        async with async_session_maker() as session:
+            result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            user = result.scalar_one_or_none()
+            if user:
+                user.photo_url = photo_url
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"Could not fetch profile photo for {telegram_id}: {e}")
+
+
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, bot: Bot):
     async with async_session_maker() as session:
         await get_or_create_user(
             session,
@@ -24,6 +49,9 @@ async def cmd_start(message: Message):
             first_name=message.from_user.first_name,
             last_name=message.from_user.last_name,
         )
+
+    # Save profile photo in background (non-blocking)
+    await _save_user_photo(bot, message.from_user.id)
 
     webapp_url = settings.WEBAPP_URL.rstrip("/")
     keyboard = InlineKeyboardMarkup(
@@ -59,10 +87,7 @@ async def cmd_help(message: Message):
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
-    user_id = message.from_user.id
-
-    # Only allow configured admins
-    if user_id not in settings.admin_ids_list:
+    if message.from_user.id not in settings.admin_ids_list:
         await message.answer("⛔️ У вас нет доступа к панели администратора.")
         return
 
@@ -75,7 +100,6 @@ async def cmd_admin(message: Message):
             )
         ]]
     )
-
     await message.answer(
         "🛠 <b>Панель администратора</b>\n\n"
         "Нажмите кнопку ниже для входа в панель управления:",

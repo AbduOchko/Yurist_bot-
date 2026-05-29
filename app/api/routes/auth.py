@@ -173,4 +173,7 @@ async def verify(data: VerifyIn, session: AsyncSession = Depends(get_session)):
         "user_id": user.id,
         "telegram_id": user.telegram_id,
         "login": user.app_login,
+        "photo_url": user.photo_url,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
     }

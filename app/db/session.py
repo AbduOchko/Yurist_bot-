@@ -41,6 +41,9 @@ async def create_tables():
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_users_app_login ON users (app_login);"
         ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500);"
+        ))
 
 
 async def get_session() -> AsyncSession:

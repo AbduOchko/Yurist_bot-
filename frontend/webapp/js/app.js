@@ -137,7 +137,7 @@ $loginBtn.addEventListener('click', async () => {
   setLoading($loginBtn, true, 'Войти');
   try {
     const data = await apiAuth('/api/auth/login', { telegram_id: TG_ID, login, password });
-    onAuthSuccess(data.token, data.login);
+    onAuthSuccess(data.token, data.login, data.photo_url);
   } catch(e) {
     $loginError.textContent = e.message;
     $loginError.classList.add('show');
@@ -183,7 +183,7 @@ $registerBtn.addEventListener('click', async () => {
       last_name:  TG_USER?.last_name  || null,
       username:   TG_USER?.username   || null,
     });
-    onAuthSuccess(data.token, data.login);
+    onAuthSuccess(data.token, data.login, data.photo_url);
   } catch(e) {
     $registerError.textContent = e.message;
     $registerError.classList.add('show');
@@ -197,11 +197,11 @@ document.getElementById('regPasswordConfirm').addEventListener('keydown', e => {
 });
 
 // ── Auth success ──────────────────────────
-function onAuthSuccess(token, login) {
+function onAuthSuccess(token, login, photoUrl) {
   localStorage.setItem(AUTH_TOKEN_KEY, token);
   localStorage.setItem(AUTH_LOGIN_KEY, login);
   $authScreen.classList.add('hidden');
-  loadProfile(login);
+  loadProfile(login, photoUrl);
 }
 
 // ── Logout ────────────────────────────────
@@ -212,22 +212,38 @@ function logout() {
 }
 
 // ── Profile ───────────────────────────────
-function loadProfile(login) {
+function loadProfile(login, photoUrl) {
   const name = TG_USER
     ? [TG_USER.first_name, TG_USER.last_name].filter(Boolean).join(' ')
     : 'Пользователь';
 
-  // Avatar initials
-  const initial = (login || name || '?')[0].toUpperCase();
-  document.getElementById('profileAvatar').textContent = initial;
-  document.getElementById('profileAvatar').innerHTML = `<span style="font-size:28px;font-weight:700;color:rgba(255,255,255,0.8)">${initial}</span>`;
+  // Avatar: priority → SDK photo_url → backend photo_url → initials
+  const avatarEl = document.getElementById('profileAvatar');
+  const photo = TG_USER?.photo_url || photoUrl || null;
 
-  document.getElementById('profileName').textContent   = name || login;
-  document.getElementById('profileLogin').textContent  = '@' + (login || '—');
+  if (photo) {
+    avatarEl.innerHTML = `
+      <img
+        src="${photo}"
+        alt="Avatar"
+        style="width:100%;height:100%;object-fit:cover;border-radius:50%;"
+        onerror="this.parentElement.innerHTML=fallbackAvatar('${login || name}')"
+      />`;
+  } else {
+    avatarEl.innerHTML = fallbackAvatar(login || name);
+  }
+
+  document.getElementById('profileName').textContent    = name || login;
+  document.getElementById('profileLogin').textContent   = '@' + (login || '—');
   document.getElementById('profileRowLogin').textContent = login || '—';
-  document.getElementById('profileTgName').textContent = TG_USER
+  document.getElementById('profileTgName').textContent  = TG_USER
     ? (TG_USER.username ? '@' + TG_USER.username : name)
     : 'Не подключён';
+}
+
+function fallbackAvatar(label) {
+  const initial = (label || '?')[0].toUpperCase();
+  return `<span style="font-size:28px;font-weight:700;color:rgba(255,255,255,0.8)">${initial}</span>`;
 }
 
 // ── Check auth on load ────────────────────
@@ -255,8 +271,10 @@ async function checkAuth() {
       body: JSON.stringify({ token }),
     });
     if (res.ok) {
+      let verifyData = {};
+      try { verifyData = await res.json(); } catch {}
       $authScreen.classList.add('hidden');
-      loadProfile(login);
+      loadProfile(login, verifyData.photo_url);
     } else {
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(AUTH_LOGIN_KEY);
