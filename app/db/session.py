@@ -44,6 +44,10 @@ async def create_tables():
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500);"
         ))
+        # Expand file_url to TEXT to support base64 data URLs
+        await conn.execute(text(
+            "ALTER TABLE messages ALTER COLUMN file_url TYPE TEXT;"
+        ))
 
 
 async def get_session() -> AsyncSession:

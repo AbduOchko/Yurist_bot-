@@ -911,27 +911,80 @@ async function forwardMessage(targetType) {
   }
 }
 
-// ── File upload ───────────────────────────────
-async function uploadAndSend(file, type) {
-  const fd = new FormData();
-  fd.append('file', file);
+// ── Media helpers — store as base64 in DB (survives Railway restarts) ────────
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function compressImage(file, maxPx = 1024, quality = 0.72) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width: w, height: h } = img;
+      if (w > maxPx || h > maxPx) {
+        if (w >= h) { h = Math.round(h * maxPx / w); w = maxPx; }
+        else        { w = Math.round(w * maxPx / h); h = maxPx; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function getMimeType(file) {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
+async function uploadAndSend(file) {
+  showToast('Отправка...');
   try {
-    const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
-    const data = await res.json();
+    let dataUrl, msgType;
+
+    if (file.type.startsWith('image/')) {
+      dataUrl = await compressImage(file);
+      msgType = 'image';
+    } else if (file.type.startsWith('video/')) {
+      dataUrl = await blobToDataUrl(file);
+      msgType = 'video';
+    } else if (file.type.startsWith('audio/')) {
+      dataUrl = await blobToDataUrl(file);
+      msgType = 'audio';
+    } else {
+      dataUrl = await blobToDataUrl(file);
+      msgType = 'document';
+    }
+
+    if (!dataUrl) { showToast('Не удалось обработать файл'); return; }
+
     await api('POST', '/api/messages/', {
       chat_id: CHAT_ID,
       sender_type: 'user',
       sender_id: USER_ID_INT,
       sender_name: USER.first_name || 'Пользователь',
-      message_type: data.message_type,
-      file_url: data.file_url,
-      file_name: data.file_name,
-      file_size: data.file_size,
+      message_type: msgType,
+      file_url: dataUrl,
+      file_name: file.name || 'file',
+      file_size: file.size,
       reply_to_id: replyToMessage?.id || null,
     });
     clearReply();
   } catch (e) {
-    showToast('Ошибка загрузки файла');
+    showToast('Ошибка отправки файла');
   }
 }
 
@@ -940,29 +993,32 @@ async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+    // Pick supported mimeType
+    const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    const mimeType = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(audioChunks, { type: 'audio/webm' });
-      const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-      const fd = new FormData();
-      fd.append('file', file);
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
       try {
-        const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
-        const data = await res.json();
+        const dataUrl = await blobToDataUrl(blob);
         await api('POST', '/api/messages/', {
           chat_id: CHAT_ID,
           sender_type: 'user',
           sender_id: USER_ID_INT,
           message_type: 'voice',
-          file_url: data.file_url,
-          file_name: data.file_name,
-          file_size: data.file_size,
+          file_url: dataUrl,
+          file_name: `voice_${Date.now()}.webm`,
+          file_size: blob.size,
         });
       } catch { showToast('Ошибка отправки голосового'); }
     };
-    mediaRecorder.start();
+
+    mediaRecorder.start(200); // collect data every 200ms
     isRecording = true;
     $voiceBtn.classList.add('recording');
   } catch {

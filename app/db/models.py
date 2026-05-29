@@ -81,7 +81,7 @@ class Message(Base):
     sender_name = Column(String(255), nullable=True)
     content = Column(Text, nullable=True)
     message_type = Column(Enum(MessageType), default=MessageType.text)
-    file_url = Column(String(1000), nullable=True)
+    file_url = Column(Text, nullable=True)
     file_name = Column(String(500), nullable=True)
     file_size = Column(Integer, nullable=True)
     is_deleted = Column(Boolean, default=False)
