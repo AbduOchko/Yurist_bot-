@@ -1,8 +1,9 @@
+import hashlib
+import hmac
 import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,17 +13,25 @@ from app.db.session import get_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 LOGIN_RE = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9_]{3,30}$")
+
+_ITERATIONS = 260_000
 
 
 def _hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """PBKDF2-SHA256 with random salt — uses only Python stdlib."""
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _ITERATIONS)
+    return f"{salt}${dk.hex()}"
 
 
-def _verify(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+def _verify(plain: str, stored: str) -> bool:
+    try:
+        salt, dk_hex = stored.split("$", 1)
+    except ValueError:
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), _ITERATIONS)
+    return hmac.compare_digest(dk.hex(), dk_hex)
 
 
 def _token() -> str:
