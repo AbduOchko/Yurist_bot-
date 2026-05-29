@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="/css/style.css"/>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script>
-    // Disable pinch-to-zoom
     document.addEventListener('touchmove', function(e) {
       if (e.touches.length > 1) e.preventDefault();
     }, { passive: false });
@@ -16,208 +15,483 @@
   </script>
 </head>
 <body>
-  <div class="page">
-    <div class="header">
-      <div class="header-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-          <path d="M2 17l10 5 10-5"/>
-          <path d="M2 12l10 5 10-5"/>
-        </svg>
-      </div>
-      <h1>Юрист Бот</h1>
-      <p>Профессиональная юридическая помощь</p>
-    </div>
 
-    <div class="cards-container">
+<!-- ─── MAIN APP ─── -->
+<div class="app-root" id="appRoot">
 
-      <!-- AI Consultant -->
-      <a class="card" href="/chat.html?type=ai" id="card-ai">
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 8v4l3 3"/>
-            <circle cx="12" cy="12" r="3" fill="currentColor" fill-opacity="0.2"/>
-          </svg>
-        </div>
-        <div class="card-content">
-          <div class="card-title">ИИ-Советник</div>
-          <div class="card-desc">Мгновенные консультации на базе искусственного интеллекта</div>
-        </div>
-        <div class="card-arrow">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-        </div>
-        <div class="badge ai">ИИ</div>
-      </a>
-
-      <!-- Live Lawyer -->
-      <a class="card" href="/chat.html?type=lawyer" id="card-lawyer">
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-            <circle cx="12" cy="7" r="4"/>
-          </svg>
-        </div>
-        <div class="card-content">
-          <div class="card-title">Личный Юрист</div>
-          <div class="card-desc">Консультация с живым специалистом в режиме реального времени</div>
-        </div>
-        <div class="card-arrow">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-        </div>
-        <div class="badge online" id="lawyer-badge">Онлайн</div>
-      </a>
-
-      <!-- Legal Matchmaker -->
-      <a class="card" href="/chat.html?type=match" id="card-match">
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="M21 21l-4.35-4.35"/>
-            <path d="M11 8v6M8 11h6"/>
-          </svg>
-        </div>
-        <div class="card-content">
-          <div class="card-title">Подбор Юриста</div>
-          <div class="card-desc">Найдём подходящего специалиста под вашу задачу</div>
-        </div>
-        <div class="card-arrow">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-        </div>
-      </a>
-
-    </div>
-
-    <div class="footer">
-      Все консультации конфиденциальны
-    </div>
-  </div>
-
-  <!-- ─── AUTH SCREEN ─── -->
-  <div class="auth-screen" id="authScreen">
-    <div class="auth-sheet">
-
-      <div class="auth-logo-wrap">
-        <div class="auth-logo">
+  <!-- ══ TAB: ГЛАВНАЯ ══ -->
+  <div class="tab-panel active" id="tab-home">
+    <div class="page" style="padding-bottom: 80px">
+      <div class="header">
+        <div class="header-logo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
             <path d="M2 17l10 5 10-5"/>
             <path d="M2 12l10 5 10-5"/>
           </svg>
         </div>
-        <div class="auth-title">Юрист Бот</div>
-        <div class="auth-subtitle">Войдите или создайте аккаунт<br>для доступа к консультациям</div>
+        <h1>Юрист Бот</h1>
+        <p>Профессиональная юридическая помощь</p>
       </div>
 
-      <!-- Tabs -->
-      <div class="auth-tabs">
-        <button class="auth-tab active" id="tabLogin">Войти</button>
-        <button class="auth-tab" id="tabRegister">Регистрация</button>
+      <div class="cards-container">
+        <a class="card" href="/chat.html?type=ai" id="card-ai">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 8v4l3 3"/>
+              <circle cx="12" cy="12" r="3" fill="currentColor" fill-opacity="0.2"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <div class="card-title">ИИ-Советник</div>
+            <div class="card-desc">Мгновенные консультации на базе искусственного интеллекта</div>
+          </div>
+          <div class="card-arrow">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="badge ai">ИИ</div>
+        </a>
+
+        <a class="card" href="/chat.html?type=lawyer" id="card-lawyer">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <div class="card-title">Личный Юрист</div>
+            <div class="card-desc">Консультация с живым специалистом в режиме реального времени</div>
+          </div>
+          <div class="card-arrow">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="badge online">Онлайн</div>
+        </a>
+
+        <a class="card" href="/chat.html?type=match" id="card-match">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="M21 21l-4.35-4.35"/>
+              <path d="M11 8v6M8 11h6"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <div class="card-title">Подбор Юриста</div>
+            <div class="card-desc">Найдём подходящего специалиста под вашу задачу</div>
+          </div>
+          <div class="card-arrow">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+        </a>
       </div>
-
-      <!-- Login Form -->
-      <form class="auth-form" id="formLogin" novalidate>
-        <div class="auth-field">
-          <div class="auth-field-label">Логин</div>
-          <div class="auth-input-wrap">
-            <div class="auth-input-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
-            </div>
-            <input class="auth-input" id="loginUsername" type="text" placeholder="Ваш логин" autocomplete="username" autocapitalize="none"/>
-          </div>
-        </div>
-
-        <div class="auth-field">
-          <div class="auth-field-label">Пароль</div>
-          <div class="auth-input-wrap">
-            <div class="auth-input-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              </svg>
-            </div>
-            <input class="auth-input" id="loginPassword" type="password" placeholder="Ваш пароль" autocomplete="current-password"/>
-            <button class="auth-input-toggle" id="toggleLoginPwd" type="button">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="auth-error" id="loginError"></div>
-
-        <button class="auth-btn" id="loginBtn">Войти</button>
-
-        <div class="auth-switch">
-          Нет аккаунта? <button onclick="switchToRegister()">Зарегистрироваться</button>
-        </div>
-      </form>
-
-      <!-- Register Form -->
-      <form class="auth-form hidden" id="formRegister" novalidate>
-        <div class="auth-field">
-          <div class="auth-field-label">Придумайте логин</div>
-          <div class="auth-input-wrap">
-            <div class="auth-input-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
-            </div>
-            <input class="auth-input" id="regUsername" type="text" placeholder="от 3 до 30 символов" autocomplete="username" autocapitalize="none"/>
-          </div>
-          <div class="auth-hint">Буквы, цифры и знак _</div>
-        </div>
-
-        <div class="auth-field">
-          <div class="auth-field-label">Пароль</div>
-          <div class="auth-input-wrap">
-            <div class="auth-input-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              </svg>
-            </div>
-            <input class="auth-input" id="regPassword" type="password" placeholder="минимум 6 символов" autocomplete="new-password"/>
-            <button class="auth-input-toggle" id="toggleRegPwd" type="button">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="auth-field">
-          <div class="auth-field-label">Повторите пароль</div>
-          <div class="auth-input-wrap">
-            <div class="auth-input-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22,4 12,14.01 9,11.01"/>
-              </svg>
-            </div>
-            <input class="auth-input" id="regPasswordConfirm" type="password" placeholder="повторите пароль" autocomplete="new-password"/>
-          </div>
-        </div>
-
-        <div class="auth-error" id="registerError"></div>
-
-        <button class="auth-btn" id="registerBtn">Создать аккаунт</button>
-
-        <div class="auth-switch">
-          Уже есть аккаунт? <button onclick="switchToLogin()">Войти</button>
-        </div>
-      </form>
-
     </div>
   </div>
 
-  <script src="/js/app.js"></script>
+  <!-- ══ TAB: FAQ ══ -->
+  <div class="tab-panel" id="tab-faq">
+    <div class="section-page">
+      <div class="section-header">
+        <h2>Частые вопросы</h2>
+        <p>Ответы на популярные юридические вопросы</p>
+      </div>
+
+      <div class="faq-list">
+
+        <div class="faq-group">
+          <div class="faq-group-title">Трудовое право</div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Могут ли меня уволить без предупреждения?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              По Трудовому кодексу РФ работодатель обязан предупредить о сокращении за 2 месяца (ст. 180 ТК РФ). Уволить без предупреждения можно только за грубые нарушения: прогул, появление в нетрезвом виде, разглашение тайны и т.д. (ст. 81 ТК РФ). В остальных случаях — только с соблюдением установленных сроков и выплатой выходного пособия.
+            </div>
+          </div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Что делать, если не выплачивают зарплату?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              При задержке зарплаты более 15 дней вы вправе приостановить работу, письменно уведомив работодателя (ст. 142 ТК РФ). Также можно обратиться в Государственную инспекцию труда (ГИТ), прокуратуру или подать иск в суд. За каждый день задержки работодатель обязан выплатить компенсацию — не менее 1/150 ключевой ставки ЦБ от суммы долга.
+            </div>
+          </div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Сколько длится испытательный срок?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Стандартный испытательный срок — не более 3 месяцев (ст. 70 ТК РФ). Для руководителей и главных бухгалтеров — до 6 месяцев. Для срочных договоров до 6 месяцев — до 2 недель. Уволить на испытательном сроке можно с уведомлением за 3 дня, без выходного пособия.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-group">
+          <div class="faq-group-title">Защита прав потребителей</div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Как вернуть товар в магазин?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Качественный товар можно вернуть в течение 14 дней (ст. 25 Закона о ЗПП) при сохранении товарного вида и без следов использования. Товар ненадлежащего качества — в течение гарантийного срока. Вы вправе потребовать замену, ремонт, уменьшение цены или возврат денег. Если продавец отказывает — направьте письменную претензию.
+            </div>
+          </div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Продавец отказывается принять претензию. Что делать?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Отправьте претензию заказным письмом с уведомлением — факт отправки уже имеет юридическую силу. Срок рассмотрения — 10 дней. При отказе обращайтесь в Роспотребнадзор или суд. В суде потребитель освобождён от уплаты госпошлины, а при решении в вашу пользу продавец также выплачивает штраф 50% от присуждённой суммы.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-group">
+          <div class="faq-group-title">Семейное право</div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Как разделить имущество при разводе?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Всё совместно нажитое имущество делится поровну (ст. 39 СК РФ). Исключение — личное имущество (подаренное, унаследованное, приобретённое до брака). Можно заключить соглашение о разделе или обратиться в суд. Срок исковой давности — 3 года с момента, когда узнали о нарушении права.
+            </div>
+          </div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>С кем останутся дети после развода?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Суд определяет место жительства ребёнка исходя из его интересов. Учитываются: привязанность к каждому из родителей, условия жизни, моральный облик, возможность обеспечить воспитание. При детях до 3 лет суды чаще оставляют их с матерью, но это не абсолютное правило. Оба родителя имеют равные права на общение с ребёнком.
+            </div>
+          </div>
+        </div>
+
+        <div class="faq-group">
+          <div class="faq-group-title">Жильё и недвижимость</div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Могут ли выселить из квартиры?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Из собственного жилья выселить крайне сложно. Из арендованного — возможно через суд при нарушении договора или неуплате. Из муниципального — за систематическое нарушение прав соседей или разрушение жилья. Выселение без решения суда незаконно. Если вас пытаются выселить — немедленно обратитесь за юридической помощью.
+            </div>
+          </div>
+
+          <div class="faq-item" onclick="toggleFaq(this)">
+            <div class="faq-question">
+              <span>Что такое срок исковой давности?</span>
+              <div class="faq-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+            <div class="faq-answer">
+              Это период, в течение которого можно обратиться в суд за защитой права. Общий срок — 3 года (ст. 196 ГК РФ). Специальные сроки: по спорам о качестве строительства — 5 лет; по ничтожным сделкам — 3 года; по оспоримым сделкам — 1 год. Истечение срока не лишает права подать иск, но ответчик вправе заявить об этом, и суд откажет в иске.
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TAB: ПРОФИЛЬ ══ -->
+  <div class="tab-panel" id="tab-profile">
+    <div class="section-page">
+      <div class="section-header">
+        <h2>Профиль</h2>
+        <p>Ваш аккаунт</p>
+      </div>
+
+      <div class="profile-avatar-wrap">
+        <div class="profile-avatar" id="profileAvatar">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <div class="profile-name" id="profileName">—</div>
+        <div class="profile-login" id="profileLogin">@—</div>
+      </div>
+
+      <div class="profile-section">
+        <div class="profile-section-title">Аккаунт</div>
+        <div class="profile-card">
+          <div class="profile-row">
+            <div class="profile-row-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </div>
+            <div class="profile-row-content">
+              <div class="profile-row-label">Логин</div>
+              <div class="profile-row-value" id="profileRowLogin">—</div>
+            </div>
+          </div>
+
+          <div class="profile-row-divider"></div>
+
+          <div class="profile-row">
+            <div class="profile-row-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </div>
+            <div class="profile-row-content">
+              <div class="profile-row-label">Telegram</div>
+              <div class="profile-row-value" id="profileTgName">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="profile-section">
+        <div class="profile-section-title">Юридическая помощь</div>
+        <div class="profile-card">
+          <div class="profile-row profile-row-btn" onclick="document.location='/chat.html?type=ai'">
+            <div class="profile-row-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+              </svg>
+            </div>
+            <div class="profile-row-content">
+              <div class="profile-row-label">ИИ-Советник</div>
+              <div class="profile-row-value">Открыть чат</div>
+            </div>
+            <svg class="profile-row-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+
+          <div class="profile-row-divider"></div>
+
+          <div class="profile-row profile-row-btn" onclick="document.location='/chat.html?type=lawyer'">
+            <div class="profile-row-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+            </div>
+            <div class="profile-row-content">
+              <div class="profile-row-label">Личный Юрист</div>
+              <div class="profile-row-value">Открыть чат</div>
+            </div>
+            <svg class="profile-row-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+
+          <div class="profile-row-divider"></div>
+
+          <div class="profile-row profile-row-btn" onclick="document.location='/chat.html?type=match'">
+            <div class="profile-row-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+              </svg>
+            </div>
+            <div class="profile-row-content">
+              <div class="profile-row-label">Подбор Юриста</div>
+              <div class="profile-row-value">Открыть чат</div>
+            </div>
+            <svg class="profile-row-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="profile-section">
+        <div class="profile-card">
+          <div class="profile-row profile-row-btn" id="logoutBtn" onclick="logout()">
+            <div class="profile-row-icon" style="color:#ff453a">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16,17 21,12 16,7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </div>
+            <div class="profile-row-content">
+              <div class="profile-row-label" style="color:#ff453a">Выйти из аккаунта</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 32px"></div>
+    </div>
+  </div>
+
+  <!-- ══ BOTTOM NAVIGATION ══ -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button class="bottom-nav-btn active" data-tab="home">
+      <div class="bottom-nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9,22 9,12 15,12 15,22"/>
+        </svg>
+      </div>
+      <span>Главная</span>
+    </button>
+
+    <button class="bottom-nav-btn" data-tab="faq">
+      <div class="bottom-nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </div>
+      <span>FAQ</span>
+    </button>
+
+    <button class="bottom-nav-btn" data-tab="profile">
+      <div class="bottom-nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+      </div>
+      <span>Профиль</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- ─── AUTH SCREEN ─── -->
+<div class="auth-screen" id="authScreen">
+  <div class="auth-sheet">
+
+    <div class="auth-logo-wrap">
+      <div class="auth-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <div class="auth-title">Юрист Бот</div>
+      <div class="auth-subtitle">Войдите или создайте аккаунт<br>для доступа к консультациям</div>
+    </div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin">Войти</button>
+      <button class="auth-tab" id="tabRegister">Регистрация</button>
+    </div>
+
+    <form class="auth-form" id="formLogin" novalidate>
+      <div class="auth-field">
+        <div class="auth-field-label">Логин</div>
+        <div class="auth-input-wrap">
+          <div class="auth-input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <input class="auth-input" id="loginUsername" type="text" placeholder="Ваш логин" autocomplete="username" autocapitalize="none"/>
+        </div>
+      </div>
+
+      <div class="auth-field">
+        <div class="auth-field-label">Пароль</div>
+        <div class="auth-input-wrap">
+          <div class="auth-input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <input class="auth-input" id="loginPassword" type="password" placeholder="Ваш пароль" autocomplete="current-password"/>
+          <button class="auth-input-toggle" id="toggleLoginPwd" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="auth-error" id="loginError"></div>
+      <button class="auth-btn" id="loginBtn" type="button">Войти</button>
+      <div class="auth-switch">Нет аккаунта? <button type="button" onclick="switchToRegister()">Зарегистрироваться</button></div>
+    </form>
+
+    <form class="auth-form hidden" id="formRegister" novalidate>
+      <div class="auth-field">
+        <div class="auth-field-label">Придумайте логин</div>
+        <div class="auth-input-wrap">
+          <div class="auth-input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <input class="auth-input" id="regUsername" type="text" placeholder="от 3 до 30 символов" autocomplete="username" autocapitalize="none"/>
+        </div>
+        <div class="auth-hint">Буквы, цифры и знак _</div>
+      </div>
+
+      <div class="auth-field">
+        <div class="auth-field-label">Пароль</div>
+        <div class="auth-input-wrap">
+          <div class="auth-input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <input class="auth-input" id="regPassword" type="password" placeholder="минимум 6 символов" autocomplete="new-password"/>
+          <button class="auth-input-toggle" id="toggleRegPwd" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="auth-field">
+        <div class="auth-field-label">Повторите пароль</div>
+        <div class="auth-input-wrap">
+          <div class="auth-input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22,4 12,14.01 9,11.01"/>
+            </svg>
+          </div>
+          <input class="auth-input" id="regPasswordConfirm" type="password" placeholder="повторите пароль" autocomplete="new-password"/>
+        </div>
+      </div>
+
+      <div class="auth-error" id="registerError"></div>
+      <button class="auth-btn" id="registerBtn" type="button">Создать аккаунт</button>
+      <div class="auth-switch">Уже есть аккаунт? <button type="button" onclick="switchToLogin()">Войти</button></div>
+    </form>
+
+  </div>
+</div>
+
+<script src="/js/app.js"></script>
 </body>
 </html>

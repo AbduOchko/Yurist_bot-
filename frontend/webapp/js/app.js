@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────
-   Юрист Бот – Main Page + Auth
+   Юрист Бот – Main App
 ─────────────────────────────────────────── */
 
 const tg = window.Telegram?.WebApp;
@@ -18,17 +18,39 @@ const AUTH_TOKEN_KEY = 'yurist_auth_token';
 const AUTH_LOGIN_KEY = 'yurist_auth_login';
 
 // ── DOM refs ──────────────────────────────
-const $authScreen   = document.getElementById('authScreen');
-const $formLogin    = document.getElementById('formLogin');
-const $formRegister = document.getElementById('formRegister');
-const $tabLogin     = document.getElementById('tabLogin');
-const $tabRegister  = document.getElementById('tabRegister');
-const $loginBtn     = document.getElementById('loginBtn');
-const $registerBtn  = document.getElementById('registerBtn');
-const $loginError   = document.getElementById('loginError');
-const $registerError= document.getElementById('registerError');
+const $authScreen    = document.getElementById('authScreen');
+const $formLogin     = document.getElementById('formLogin');
+const $formRegister  = document.getElementById('formRegister');
+const $tabLogin      = document.getElementById('tabLogin');
+const $tabRegister   = document.getElementById('tabRegister');
+const $loginBtn      = document.getElementById('loginBtn');
+const $registerBtn   = document.getElementById('registerBtn');
+const $loginError    = document.getElementById('loginError');
+const $registerError = document.getElementById('registerError');
 
-// ── Tab switching ────────────────────────
+// ── Bottom Nav ────────────────────────────
+document.querySelectorAll('.bottom-nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.bottom-nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-' + tab)?.classList.add('active');
+    // Scroll to top on tab switch
+    document.getElementById('tab-' + tab)?.scrollTo(0, 0);
+  });
+});
+
+// ── FAQ accordion ─────────────────────────
+function toggleFaq(el) {
+  const isOpen = el.classList.contains('open');
+  // Close all
+  document.querySelectorAll('.faq-item.open').forEach(item => item.classList.remove('open'));
+  // Toggle clicked
+  if (!isOpen) el.classList.add('open');
+}
+
+// ── Auth tab switching ────────────────────
 function switchToLogin() {
   $tabLogin.classList.add('active');
   $tabRegister.classList.remove('active');
@@ -75,16 +97,15 @@ async function apiAuth(path, body) {
       if (typeof data.detail === 'string') {
         msg = data.detail;
       } else if (Array.isArray(data.detail)) {
-        // Pydantic v2 validation error list — translate to Russian
         const first = data.detail[0] || {};
         const type = first.type || '';
         const RU = {
-          'string_pattern_mismatch': 'Логин содержит недопустимые символы. Используйте только буквы, цифры и _',
-          'string_too_short':  'Слишком короткое значение',
-          'string_too_long':   'Слишком длинное значение',
-          'missing':           'Заполните все обязательные поля',
-          'value_error':       'Неверное значение',
-          'int_parsing':       'Ожидается числовое значение',
+          'string_pattern_mismatch': 'Логин содержит недопустимые символы. Используйте буквы, цифры и _',
+          'string_too_short': 'Слишком короткое значение',
+          'string_too_long':  'Слишком длинное значение',
+          'missing':          'Заполните все обязательные поля',
+          'value_error':      'Неверное значение',
+          'int_parsing':      'Ожидается числовое значение',
         };
         msg = RU[type] || 'Проверьте правильность введённых данных';
       }
@@ -94,18 +115,14 @@ async function apiAuth(path, body) {
   return data;
 }
 
-function setLoading(btn, loading) {
-  if (loading) {
-    btn.disabled = true;
-    btn.innerHTML = `<div class="auth-btn-loading"><div class="auth-spinner"></div> Загрузка...</div>`;
-  } else {
-    btn.disabled = false;
-    btn.innerHTML = btn.dataset.label || btn.textContent;
-  }
+function setLoading(btn, loading, label) {
+  btn.disabled = loading;
+  btn.innerHTML = loading
+    ? `<div class="auth-btn-loading"><div class="auth-spinner"></div> Загрузка...</div>`
+    : label;
 }
 
-// ── Login ────────────────────────────────
-$loginBtn.dataset.label = 'Войти';
+// ── Login ─────────────────────────────────
 $loginBtn.addEventListener('click', async () => {
   const login    = document.getElementById('loginUsername').value.trim();
   const password = document.getElementById('loginPassword').value;
@@ -117,20 +134,15 @@ $loginBtn.addEventListener('click', async () => {
     return;
   }
 
-  setLoading($loginBtn, true);
+  setLoading($loginBtn, true, 'Войти');
   try {
-    const data = await apiAuth('/api/auth/login', {
-      telegram_id: TG_ID,
-      login,
-      password,
-    });
+    const data = await apiAuth('/api/auth/login', { telegram_id: TG_ID, login, password });
     onAuthSuccess(data.token, data.login);
   } catch(e) {
     $loginError.textContent = e.message;
     $loginError.classList.add('show');
   } finally {
-    setLoading($loginBtn, false);
-    $loginBtn.textContent = 'Войти';
+    setLoading($loginBtn, false, 'Войти');
   }
 });
 
@@ -139,7 +151,6 @@ document.getElementById('loginPassword').addEventListener('keydown', e => {
 });
 
 // ── Register ──────────────────────────────
-$registerBtn.dataset.label = 'Создать аккаунт';
 $registerBtn.addEventListener('click', async () => {
   const login    = document.getElementById('regUsername').value.trim();
   const password = document.getElementById('regPassword').value;
@@ -162,7 +173,7 @@ $registerBtn.addEventListener('click', async () => {
     return;
   }
 
-  setLoading($registerBtn, true);
+  setLoading($registerBtn, true, 'Создать аккаунт');
   try {
     const data = await apiAuth('/api/auth/register', {
       telegram_id: TG_ID,
@@ -177,8 +188,7 @@ $registerBtn.addEventListener('click', async () => {
     $registerError.textContent = e.message;
     $registerError.classList.add('show');
   } finally {
-    setLoading($registerBtn, false);
-    $registerBtn.textContent = 'Создать аккаунт';
+    setLoading($registerBtn, false, 'Создать аккаунт');
   }
 });
 
@@ -191,13 +201,41 @@ function onAuthSuccess(token, login) {
   localStorage.setItem(AUTH_TOKEN_KEY, token);
   localStorage.setItem(AUTH_LOGIN_KEY, login);
   $authScreen.classList.add('hidden');
+  loadProfile(login);
 }
 
-// ── Verify existing session ───────────────
+// ── Logout ────────────────────────────────
+function logout() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_LOGIN_KEY);
+  location.reload();
+}
+
+// ── Profile ───────────────────────────────
+function loadProfile(login) {
+  const name = TG_USER
+    ? [TG_USER.first_name, TG_USER.last_name].filter(Boolean).join(' ')
+    : 'Пользователь';
+
+  // Avatar initials
+  const initial = (login || name || '?')[0].toUpperCase();
+  document.getElementById('profileAvatar').textContent = initial;
+  document.getElementById('profileAvatar').innerHTML = `<span style="font-size:28px;font-weight:700;color:rgba(255,255,255,0.8)">${initial}</span>`;
+
+  document.getElementById('profileName').textContent   = name || login;
+  document.getElementById('profileLogin').textContent  = '@' + (login || '—');
+  document.getElementById('profileRowLogin').textContent = login || '—';
+  document.getElementById('profileTgName').textContent = TG_USER
+    ? (TG_USER.username ? '@' + TG_USER.username : name)
+    : 'Не подключён';
+}
+
+// ── Check auth on load ────────────────────
 async function checkAuth() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const login = localStorage.getItem(AUTH_LOGIN_KEY);
+
   if (!token) {
-    // No token — check if this TG user has an account to decide tab
     try {
       const res = await fetch('/api/auth/check', {
         method: 'POST',
@@ -207,7 +245,7 @@ async function checkAuth() {
       const data = await res.json();
       if (!data.has_account) switchToRegister();
     } catch {}
-    return; // Show auth screen
+    return;
   }
 
   try {
@@ -217,18 +255,18 @@ async function checkAuth() {
       body: JSON.stringify({ token }),
     });
     if (res.ok) {
-      // Valid session — hide auth screen
       $authScreen.classList.add('hidden');
+      loadProfile(login);
     } else {
       localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_LOGIN_KEY);
     }
   } catch {}
 }
 
-// ── Start ────────────────────────────────
 checkAuth();
 
-// ── Card press 3D effect ──────────────────
+// ── Card 3D press effect ──────────────────
 document.querySelectorAll('.card').forEach(card => {
   card.addEventListener('touchstart', () => {
     card.style.transform = 'perspective(1000px) translateZ(-6px) scale(0.97)';
