@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, ai, chats, files, messages, users, ws
+from app.api.routes import admin, ai, auth, chats, files, messages, users, ws
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ async def debug():
 
 
 # API routers — must be registered BEFORE static files mount
+app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(chats.router)
 app.include_router(messages.router)

@@ -8,10 +8,26 @@ if (tg) {
   tg.expand();
   try { tg.setHeaderColor('#000000'); } catch(e) {}
   try { tg.setBackgroundColor('#000000'); } catch(e) {}
-  // Enable native Telegram back button
   tg.BackButton.show();
   tg.BackButton.onClick(() => { window.location.href = '/'; });
 }
+
+// Guard: redirect to main page if no auth token
+(async function guardAuth() {
+  const token = localStorage.getItem('yurist_auth_token');
+  if (!token) { window.location.href = '/'; return; }
+  try {
+    const res = await fetch('/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) {
+      localStorage.removeItem('yurist_auth_token');
+      window.location.href = '/';
+    }
+  } catch {}
+})();
 
 // ── URL params ──────────────────────────────
 const params = new URLSearchParams(location.search);
