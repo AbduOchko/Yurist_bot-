@@ -435,6 +435,25 @@ function renderContent(msg, isUser) {
 // Global registry of active voice players
 const _activePlayers = new Set();
 
+/**
+ * Convert base64 data URL → Blob URL synchronously via atob().
+ * Blob URLs work on iOS where large data URLs sometimes fail.
+ */
+function dataUrlToBlobUrl(dataUrl) {
+  try {
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return null;
+    const meta     = dataUrl.slice(0, comma);
+    const mimeType = (meta.match(/:(.*?);/) || [])[1] || 'audio/mpeg';
+    const binary   = atob(dataUrl.slice(comma + 1));
+    const bytes    = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+  } catch {
+    return null;
+  }
+}
+
 function createVoicePlayer(msg, isUser) {
   const storedSec = msg.content && !isNaN(parseFloat(msg.content))
     ? parseFloat(msg.content) : null;
@@ -454,11 +473,14 @@ function createVoicePlayer(msg, isUser) {
 
   if (!msg.file_url) return div;
 
-  // Create Audio synchronously — no fetch, no async.
-  // audio.play() MUST be called in the same sync tick as the click (iOS rule).
-  const audio = new Audio();
+  // Convert data URL → Blob URL synchronously (no fetch, no async).
+  // Blob URL plays reliably on iOS; falls back to raw data URL if conversion fails.
+  const blobUrl = msg.file_url.startsWith('data:')
+    ? dataUrlToBlobUrl(msg.file_url)
+    : null;
+
+  const audio = new Audio(blobUrl || msg.file_url);
   audio.preload = 'auto';
-  audio.src = msg.file_url;   // data URL — set immediately
 
   let playing = false;
 
@@ -477,10 +499,16 @@ function createVoicePlayer(msg, isUser) {
     resetToPlay();
   }
 
+  audio.addEventListener('loadedmetadata', () => {
+    const d = audio.duration;
+    if (d && isFinite(d) && d > 0) {
+      $dur.textContent = formatDuration(d);
+    }
+  });
+
   audio.addEventListener('timeupdate', () => {
     const total = (audio.duration && isFinite(audio.duration))
-      ? audio.duration
-      : (storedSec || 1);
+      ? audio.duration : (storedSec || 1);
     $progress.style.width = Math.min(audio.currentTime / total * 100, 100) + '%';
     $dur.textContent = formatDuration(audio.currentTime);
   });
@@ -490,13 +518,10 @@ function createVoicePlayer(msg, isUser) {
     resetToPlay();
   });
 
-  audio.addEventListener('error', () => {
-    resetToPlay();
-  });
+  audio.addEventListener('error', () => resetToPlay());
 
-  // ── Click: play() вызывается СИНХРОННО в click handler (iOS) ──
+  // ── Click: play() вызывается СИНХРОННО в click handler (требование iOS) ──
   $btn.addEventListener('click', () => {
-    // Already playing → pause
     if (!audio.paused) {
       audio.pause();
       playing = false;
@@ -505,20 +530,31 @@ function createVoicePlayer(msg, isUser) {
       return;
     }
 
-    // Stop all other players synchronously
+    // Stop all other players first
     _activePlayers.forEach(fn => fn());
     _activePlayers.clear();
 
-    // Synchronous play() — direct user gesture context
     audio.play()
       .then(() => {
         playing = true;
         $btn.innerHTML = pauseIcon();
         _activePlayers.add(stopThis);
       })
-      .catch(() => {
+      .catch(err => {
         resetToPlay();
-        showToast('Не удалось воспроизвести');
+        // If blob URL failed, try raw data URL as last resort
+        if (blobUrl) {
+          audio.src = msg.file_url;
+          audio.play()
+            .then(() => {
+              playing = true;
+              $btn.innerHTML = pauseIcon();
+              _activePlayers.add(stopThis);
+            })
+            .catch(() => showToast('Не удалось воспроизвести'));
+        } else {
+          showToast('Не удалось воспроизвести');
+        }
       });
   });
 
@@ -1056,8 +1092,11 @@ async function startRecording() {
         return;
       }
 
-      const actualType = mediaRecorder.mimeType || mimeType || 'audio/webm';
-      const blob = new Blob(audioChunks, { type: actualType });
+      // Use actual recorded type; never override mp4 data with webm label
+      const actualType = mediaRecorder.mimeType || mimeType || '';
+      const blob = actualType
+        ? new Blob(audioChunks, { type: actualType })
+        : new Blob(audioChunks);   // let browser detect type
 
       if (blob.size < 100) {
         showToast('Ошибка записи — слишком маленький файл');
@@ -1066,15 +1105,14 @@ async function startRecording() {
 
       try {
         const dataUrl = await blobToDataUrl(blob);
-        // Store duration in content field so the player can display it
         await api('POST', '/api/messages/', {
           chat_id: CHAT_ID,
           sender_type: 'user',
           sender_id: USER_ID_INT,
           message_type: 'voice',
-          content: String(durationSec),  // ← duration in seconds
+          content: String(durationSec),  // duration for player display
           file_url: dataUrl,
-          file_name: `voice_${Date.now()}.webm`,
+          file_name: `voice_${Date.now()}`,
           file_size: blob.size,
         });
       } catch {
