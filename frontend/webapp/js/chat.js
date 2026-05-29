@@ -452,115 +452,74 @@ function createVoicePlayer(msg, isUser) {
   const $progress = div.querySelector('.voice-progress');
   const $dur      = div.querySelector('.voice-duration');
 
-  let audio     = null;
-  let objectUrl = null;
-  let ready     = false;   // true once blob URL is prepared
-  let playing   = false;
+  if (!msg.file_url) return div;
 
-  // ── Prepare: convert data URL → blob → object URL (fast, local) ──
-  // Done as soon as the player renders so audio is ready before first tap.
-  function prepare() {
-    if (ready || !msg.file_url) return;
-    fetch(msg.file_url)
-      .then(r => r.blob())
-      .then(blob => {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-        objectUrl = URL.createObjectURL(blob);
-        audio = new Audio(objectUrl);
+  // Create Audio synchronously — no fetch, no async.
+  // audio.play() MUST be called in the same sync tick as the click (iOS rule).
+  const audio = new Audio();
+  audio.preload = 'auto';
+  audio.src = msg.file_url;   // data URL — set immediately
 
-        audio.addEventListener('loadedmetadata', () => {
-          const d = audio.duration;
-          if (d && isFinite(d) && d > 0.1) {
-            $dur.textContent = formatDuration(d);
-          } else if (storedSec) {
-            $dur.textContent = formatDuration(storedSec);
-          }
-        });
+  let playing = false;
 
-        audio.addEventListener('timeupdate', () => {
-          const total = audio.duration || storedSec || 1;
-          $progress.style.width = (audio.currentTime / total * 100) + '%';
-          $dur.textContent = formatDuration(audio.currentTime);
-        });
-
-        audio.addEventListener('ended', () => {
-          playing = false;
-          $btn.innerHTML = playIcon();
-          $progress.style.width = '0%';
-          $dur.textContent = storedSec ? formatDuration(storedSec) : '0:00';
-          _activePlayers.delete(stopThis);
-          audio.load(); // reset for replay
-        });
-
-        audio.addEventListener('error', () => {
-          playing = false;
-          $btn.innerHTML = playIcon();
-          _activePlayers.delete(stopThis);
-        });
-
-        ready = true;
-      })
-      .catch(() => {
-        // Fallback: use data URL directly (less reliable on iOS but better than nothing)
-        audio = new Audio(msg.file_url);
-        ready = true;
-      });
-  }
-
-  prepare(); // start immediately
-
-  function stopThis() {
-    if (!audio || audio.paused) return;
-    audio.pause();
+  function resetToPlay() {
     playing = false;
     $btn.innerHTML = playIcon();
+    $progress.style.width = '0%';
+    $dur.textContent = storedSec ? formatDuration(storedSec) : '0:00';
+    _activePlayers.delete(stopThis);
   }
 
-  // ── Click handler: MUST call play() synchronously (iOS policy) ──
-  $btn.addEventListener('click', () => {
-    if (!msg.file_url) { showToast('Файл недоступен'); return; }
+  function stopThis() {
+    if (audio.paused) return;
+    audio.pause();
+    audio.currentTime = 0;
+    resetToPlay();
+  }
 
-    // Pause → stop
-    if (playing) {
-      stopThis();
+  audio.addEventListener('timeupdate', () => {
+    const total = (audio.duration && isFinite(audio.duration))
+      ? audio.duration
+      : (storedSec || 1);
+    $progress.style.width = Math.min(audio.currentTime / total * 100, 100) + '%';
+    $dur.textContent = formatDuration(audio.currentTime);
+  });
+
+  audio.addEventListener('ended', () => {
+    audio.currentTime = 0;
+    resetToPlay();
+  });
+
+  audio.addEventListener('error', () => {
+    resetToPlay();
+  });
+
+  // ── Click: play() вызывается СИНХРОННО в click handler (iOS) ──
+  $btn.addEventListener('click', () => {
+    // Already playing → pause
+    if (!audio.paused) {
+      audio.pause();
+      playing = false;
+      $btn.innerHTML = playIcon();
       _activePlayers.delete(stopThis);
       return;
     }
 
-    // Stop all others
+    // Stop all other players synchronously
     _activePlayers.forEach(fn => fn());
     _activePlayers.clear();
 
-    if (!ready || !audio) {
-      // Not loaded yet — show loading, user should tap again in a moment
-      $btn.innerHTML = `<div class="loading-spinner" style="width:14px;height:14px;border-width:2px"></div>`;
-      prepare();
-      setTimeout(() => {
-        if (!playing) $btn.innerHTML = playIcon();
-      }, 3000);
-      return;
-    }
-
-    // play() must be called here, synchronously in the click handler
-    const p = audio.play();
-    if (p !== undefined) {
-      p.then(() => {
+    // Synchronous play() — direct user gesture context
+    audio.play()
+      .then(() => {
         playing = true;
         $btn.innerHTML = pauseIcon();
         _activePlayers.add(stopThis);
-      }).catch(err => {
-        playing = false;
-        $btn.innerHTML = playIcon();
-        // Last resort: recreate audio and let user tap again
-        ready = false;
-        prepare();
-        showToast('Нажмите ещё раз');
+      })
+      .catch(() => {
+        resetToPlay();
+        showToast('Не удалось воспроизвести');
       });
-    } else {
-      playing = true;
-      $btn.innerHTML = pauseIcon();
-      _activePlayers.add(stopThis);
-    }
   });
 
   return div;
@@ -1062,13 +1021,13 @@ async function startRecording() {
     recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioChunks = [];
 
-    // Pick best supported mimeType
+    // Pick best supported mimeType — mp4 first for iOS Safari
     const mimes = [
+      'audio/mp4',
+      'audio/mp4;codecs=mp4a.40.2',
       'audio/webm;codecs=opus',
       'audio/webm',
       'audio/ogg;codecs=opus',
-      'audio/mp4;codecs=mp4a',
-      'audio/mp4',
     ];
     const mimeType = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
 
