@@ -2,6 +2,19 @@
    Юрист Бот – Chat Page Logic
 ─────────────────────────────────────────── */
 
+// ── Block text selection everywhere except inputs ──
+document.addEventListener('selectstart', e => {
+  if (!e.target.closest('input, textarea, [contenteditable]')) {
+    e.preventDefault();
+  }
+});
+document.addEventListener('contextmenu', e => {
+  // Prevent long-press context menu on iOS (triggers selection highlight)
+  if (!e.target.closest('input, textarea, [contenteditable]')) {
+    e.preventDefault();
+  }
+});
+
 const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
@@ -418,58 +431,102 @@ function renderContent(msg, isUser) {
   return frag;
 }
 
+// Global registry of active voice players so we can stop others
+const _activePlayers = new Set();
+
 function createVoicePlayer(msg, isUser) {
   const div = document.createElement('div');
   div.className = 'voice-player';
   div.innerHTML = `
-    <button class="voice-play-btn" data-url="${msg.file_url}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="5,3 19,12 5,21 5,3"/>
-      </svg>
+    <button class="voice-play-btn">
+      ${playIcon()}
     </button>
     <div class="voice-waveform"><div class="voice-progress" style="width:0%"></div></div>
     <span class="voice-duration">0:00</span>`;
 
-  const audio = new Audio(msg.file_url);
   const $btn      = div.querySelector('.voice-play-btn');
   const $progress = div.querySelector('.voice-progress');
   const $duration = div.querySelector('.voice-duration');
 
-  audio.addEventListener('timeupdate', () => {
-    const pct = (audio.currentTime / (audio.duration || 1)) * 100;
-    $progress.style.width = pct + '%';
-    $duration.textContent = formatDuration(audio.currentTime);
-  });
+  let audio = null;
 
-  audio.addEventListener('ended', () => {
-    $progress.style.width = '0%';
-    $duration.textContent = '0:00';
-    $btn.innerHTML = playIcon();
-    // Reset so next click replays from start
-    audio.currentTime = 0;
-  });
+  function buildAudio() {
+    audio = new Audio(msg.file_url);
+    audio.preload = 'metadata';
 
-  audio.addEventListener('loadedmetadata', () => {
-    if (audio.duration && isFinite(audio.duration)) {
-      $duration.textContent = formatDuration(audio.duration);
-    }
-  });
+    audio.addEventListener('loadedmetadata', () => {
+      if (audio.duration && isFinite(audio.duration)) {
+        $duration.textContent = formatDuration(audio.duration);
+      }
+    });
 
-  $btn.addEventListener('click', () => {
-    if (audio.paused) {
-      // Pause all other voice messages first
-      document.querySelectorAll('.voice-audio-active').forEach(a => {
-        a.pause();
-        a.dispatchEvent(new Event('ended'));
-      });
-      audio.play().catch(() => {});
-      audio._isActive = true;
-      $btn.innerHTML = pauseIcon();
-      $btn.dataset.active = '1';
-    } else {
+    audio.addEventListener('timeupdate', () => {
+      if (!audio.duration) return;
+      const pct = (audio.currentTime / audio.duration) * 100;
+      $progress.style.width = pct + '%';
+      $duration.textContent = formatDuration(audio.currentTime);
+    });
+
+    audio.addEventListener('ended', () => {
+      $progress.style.width = '0%';
+      $btn.innerHTML = playIcon();
+      _activePlayers.delete(stop);
+      // Fully reload so next play() works on iOS
+      audio.load();
+      if (audio.duration && isFinite(audio.duration)) {
+        $duration.textContent = formatDuration(audio.duration);
+      } else {
+        $duration.textContent = '0:00';
+      }
+    });
+
+    audio.addEventListener('error', () => {
+      $btn.innerHTML = playIcon();
+      _activePlayers.delete(stop);
+    });
+  }
+
+  function stop() {
+    if (audio && !audio.paused) {
       audio.pause();
       $btn.innerHTML = playIcon();
-      delete $btn.dataset.active;
+    }
+  }
+
+  $btn.addEventListener('click', () => {
+    if (!audio) buildAudio();
+
+    if (!audio.paused) {
+      // Currently playing → pause
+      audio.pause();
+      $btn.innerHTML = playIcon();
+      _activePlayers.delete(stop);
+      return;
+    }
+
+    // Stop all other active players
+    _activePlayers.forEach(fn => fn());
+    _activePlayers.clear();
+
+    // Play
+    const promise = audio.play();
+    if (promise !== undefined) {
+      promise
+        .then(() => {
+          $btn.innerHTML = pauseIcon();
+          _activePlayers.add(stop);
+        })
+        .catch(() => {
+          // iOS autoplay policy — rebuild and retry once
+          buildAudio();
+          audio.play().then(() => {
+            $btn.innerHTML = pauseIcon();
+            _activePlayers.add(stop);
+          }).catch(() => {});
+        });
+    } else {
+      $btn.innerHTML = pauseIcon();
+      _activePlayers.add(stop);
     }
   });
 

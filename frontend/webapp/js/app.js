@@ -2,6 +2,18 @@
    Юрист Бот – Main App
 ─────────────────────────────────────────── */
 
+// Block text selection everywhere except inputs
+document.addEventListener('selectstart', e => {
+  if (!e.target.closest('input, textarea, [contenteditable]')) {
+    e.preventDefault();
+  }
+});
+document.addEventListener('contextmenu', e => {
+  if (!e.target.closest('input, textarea, [contenteditable]')) {
+    e.preventDefault();
+  }
+});
+
 const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
