@@ -435,6 +435,13 @@ function renderContent(msg, isUser) {
 const _activePlayers = new Set();
 
 function createVoicePlayer(msg, isUser) {
+  // Duration stored in content field when recorded
+  const storedSec = msg.content && !isNaN(parseFloat(msg.content))
+    ? parseFloat(msg.content)
+    : null;
+
+  const initDuration = storedSec ? formatDuration(storedSec) : '0:00';
+
   const div = document.createElement('div');
   div.className = 'voice-player';
   div.innerHTML = `
@@ -442,7 +449,7 @@ function createVoicePlayer(msg, isUser) {
       ${playIcon()}
     </button>
     <div class="voice-waveform"><div class="voice-progress" style="width:0%"></div></div>
-    <span class="voice-duration">0:00</span>`;
+    <span class="voice-duration">${initDuration}</span>`;
 
   const $btn      = div.querySelector('.voice-play-btn');
   const $progress = div.querySelector('.voice-progress');
@@ -455,8 +462,11 @@ function createVoicePlayer(msg, isUser) {
     audio.preload = 'metadata';
 
     audio.addEventListener('loadedmetadata', () => {
-      if (audio.duration && isFinite(audio.duration)) {
+      // WebM from MediaRecorder often returns Infinity — use stored duration instead
+      if (audio.duration && isFinite(audio.duration) && audio.duration > 0.1) {
         $duration.textContent = formatDuration(audio.duration);
+      } else if (storedSec) {
+        $duration.textContent = formatDuration(storedSec);
       }
     });
 
@@ -989,48 +999,124 @@ async function uploadAndSend(file) {
 }
 
 // ── Voice recording ───────────────────────────
+const MIN_VOICE_SEC = 2;
+let recStartTime = 0;
+let recTimerInterval = null;
+let recStream = null;
+let recCancelled = false;
+
+const $recordingRow = document.getElementById('recordingRow');
+const $inputRow     = document.getElementById('inputRow');
+const $recTimer     = document.getElementById('recTimer');
+const $recCancelBtn = document.getElementById('recCancelBtn');
+
+function showRecordingUI() {
+  $inputRow.classList.add('hidden');
+  $recordingRow.classList.remove('hidden');
+  recStartTime = Date.now();
+  $recTimer.textContent = '0:00';
+  recTimerInterval = setInterval(() => {
+    const s = Math.floor((Date.now() - recStartTime) / 1000);
+    $recTimer.textContent = formatDuration(s);
+  }, 100);
+}
+
+function hideRecordingUI() {
+  $recordingRow.classList.add('hidden');
+  $inputRow.classList.remove('hidden');
+  clearInterval(recTimerInterval);
+  recTimerInterval = null;
+}
+
+$recCancelBtn.addEventListener('click', () => {
+  recCancelled = true;
+  stopRecording(true);
+});
+
 async function startRecording() {
+  recCancelled = false;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioChunks = [];
 
-    // Pick supported mimeType
-    const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    // Pick best supported mimeType
+    const mimes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/mp4;codecs=mp4a',
+      'audio/mp4',
+    ];
     const mimeType = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
 
-    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder = new MediaRecorder(recStream, mimeType ? { mimeType } : {});
+    mediaRecorder.ondataavailable = e => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
 
     mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      recStream.getTracks().forEach(t => t.stop());
+      recStream = null;
+      hideRecordingUI();
+      $voiceBtn.classList.remove('recording');
+
+      if (recCancelled) return;
+
+      const durationSec = Math.round((Date.now() - recStartTime) / 1000);
+
+      if (durationSec < MIN_VOICE_SEC) {
+        showToast('Держите дольше — минимум 2 секунды');
+        return;
+      }
+
+      if (!audioChunks.length) {
+        showToast('Ошибка записи — нет данных');
+        return;
+      }
+
+      const actualType = mediaRecorder.mimeType || mimeType || 'audio/webm';
+      const blob = new Blob(audioChunks, { type: actualType });
+
+      if (blob.size < 100) {
+        showToast('Ошибка записи — слишком маленький файл');
+        return;
+      }
+
       try {
         const dataUrl = await blobToDataUrl(blob);
+        // Store duration in content field so the player can display it
         await api('POST', '/api/messages/', {
           chat_id: CHAT_ID,
           sender_type: 'user',
           sender_id: USER_ID_INT,
           message_type: 'voice',
+          content: String(durationSec),  // ← duration in seconds
           file_url: dataUrl,
           file_name: `voice_${Date.now()}.webm`,
           file_size: blob.size,
         });
-      } catch { showToast('Ошибка отправки голосового'); }
+      } catch {
+        showToast('Ошибка отправки голосового');
+      }
     };
 
-    mediaRecorder.start(200); // collect data every 200ms
+    mediaRecorder.start(100); // chunk every 100ms for reliability
     isRecording = true;
     $voiceBtn.classList.add('recording');
-  } catch {
+    showRecordingUI();
+
+  } catch (err) {
+    hideRecordingUI();
     showToast('Нет доступа к микрофону');
   }
 }
 
-function stopRecording() {
-  if (mediaRecorder && isRecording) {
+function stopRecording(cancel = false) {
+  if (!isRecording) return;
+  recCancelled = cancel;
+  isRecording = false;
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
-    isRecording = false;
-    $voiceBtn.classList.remove('recording');
   }
 }
 
@@ -1150,11 +1236,31 @@ document.getElementById('fileInputFile').addEventListener('change', (e) => {
   if (e.target.files[0]) uploadAndSend(e.target.files[0], 'document');
 });
 
-// Voice recording
-$voiceBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); }, { passive: false });
-$voiceBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); }, { passive: false });
-$voiceBtn.addEventListener('mousedown', startRecording);
-$voiceBtn.addEventListener('mouseup', stopRecording);
+// Voice recording — touch
+$voiceBtn.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  startRecording();
+}, { passive: false });
+
+$voiceBtn.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  stopRecording(false);
+}, { passive: false });
+
+$voiceBtn.addEventListener('touchcancel', (e) => {
+  e.preventDefault();
+  stopRecording(true); // cancel on touchcancel
+}, { passive: false });
+
+// Voice recording — mouse (desktop)
+$voiceBtn.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  startRecording();
+});
+
+document.addEventListener('mouseup', () => {
+  if (isRecording) stopRecording(false);
+});
 
 // Context menu actions
 $ctxOverlay.addEventListener('click', hideContextMenu);

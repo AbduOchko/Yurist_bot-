@@ -741,6 +741,82 @@ body {
   background: transparent;
 }
 
+/* ─── RECORDING UI ─── */
+.recording-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  animation: fadeInUp 0.2s ease;
+}
+
+.recording-row.hidden { display: none !important; }
+
+.rec-cancel-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.rec-cancel-btn:active { background: rgba(255,69,58,0.2); color: #ff453a; }
+
+.rec-bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  height: 32px;
+}
+
+.rec-bars span {
+  display: block;
+  width: 3px;
+  border-radius: 2px;
+  background: #ff3b30;
+  animation: recBarAnim 0.7s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+.rec-bars span:nth-child(1) { animation-delay: 0.00s; height: 8px; }
+.rec-bars span:nth-child(2) { animation-delay: 0.08s; height: 14px; }
+.rec-bars span:nth-child(3) { animation-delay: 0.16s; height: 20px; }
+.rec-bars span:nth-child(4) { animation-delay: 0.24s; height: 26px; }
+.rec-bars span:nth-child(5) { animation-delay: 0.32s; height: 30px; }
+.rec-bars span:nth-child(6) { animation-delay: 0.40s; height: 26px; }
+.rec-bars span:nth-child(7) { animation-delay: 0.48s; height: 20px; }
+.rec-bars span:nth-child(8) { animation-delay: 0.56s; height: 14px; }
+.rec-bars span:nth-child(9) { animation-delay: 0.64s; height: 8px; }
+
+@keyframes recBarAnim {
+  0%, 100% { transform: scaleY(0.3); opacity: 0.5; }
+  50%       { transform: scaleY(1);   opacity: 1; }
+}
+
+.rec-timer {
+  font-size: 15px;
+  font-weight: 600;
+  color: #ff3b30;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
+  flex-shrink: 0;
+}
+
+.rec-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* ─── INPUT AREA ─── */
 .input-area {
   background: rgba(0,0,0,0.8);
