@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
@@ -20,7 +21,26 @@ async_session_maker = async_sessionmaker(
 
 async def create_tables():
     async with engine.begin() as conn:
+        # Create all tables that don't exist yet
         await conn.run_sync(Base.metadata.create_all)
+
+        # Add new columns to existing tables (safe: IF NOT EXISTS)
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS app_login VARCHAR(50) UNIQUE;"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS app_password_hash VARCHAR(255);"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_token VARCHAR(64);"
+        ))
+        # Index on session_token for fast verify lookups
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_users_session_token ON users (session_token);"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_users_app_login ON users (app_login);"
+        ))
 
 
 async def get_session() -> AsyncSession:
