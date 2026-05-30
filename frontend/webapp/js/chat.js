@@ -967,6 +967,92 @@ function blobToDataUrl(blob) {
   });
 }
 
+// gpt-4o-audio-preview принимает только wav/mp3, а iOS/MediaRecorder пишет
+// mp4/webm. Декодируем через Web Audio API, ресемплим в 16k моно и пакуем в
+// WAV PCM16 (этого формата достаточно для модели и в разы меньше 44.1k).
+async function audioBlobToWavDataUrl(blob, targetSampleRate = 16000) {
+  const ArrayBufferData = await blob.arrayBuffer();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  let decoded;
+  try {
+    decoded = await ctx.decodeAudioData(ArrayBufferData.slice(0));
+  } finally {
+    // close() возвращает промис, но нам всё равно — не блокируем
+    try { ctx.close(); } catch {}
+  }
+
+  // Mix-down в моно
+  const inLength = decoded.length;
+  const inRate   = decoded.sampleRate;
+  const channels = decoded.numberOfChannels;
+  let mono;
+  if (channels === 1) {
+    mono = decoded.getChannelData(0);
+  } else {
+    mono = new Float32Array(inLength);
+    for (let c = 0; c < channels; c++) {
+      const ch = decoded.getChannelData(c);
+      for (let i = 0; i < inLength; i++) mono[i] += ch[i];
+    }
+    for (let i = 0; i < inLength; i++) mono[i] /= channels;
+  }
+
+  // Ресемпл через OfflineAudioContext (с антиалиасингом)
+  let samples = mono;
+  if (inRate !== targetSampleRate) {
+    const outLength = Math.max(1, Math.round(inLength * targetSampleRate / inRate));
+    const offline = new OfflineAudioContext(1, outLength, targetSampleRate);
+    const src = offline.createBufferSource();
+    const buf = offline.createBuffer(1, inLength, inRate);
+    buf.copyToChannel(mono, 0);
+    src.buffer = buf;
+    src.connect(offline.destination);
+    src.start(0);
+    const rendered = await offline.startRendering();
+    samples = rendered.getChannelData(0);
+  }
+
+  // Pack as WAV PCM16
+  const wavBuf = encodeWavPcm16(samples, targetSampleRate);
+
+  // ArrayBuffer → base64 data URL (чанками, чтобы не упереться в стек)
+  const bytes = new Uint8Array(wavBuf);
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return `data:audio/wav;base64,${btoa(binary)}`;
+}
+
+function encodeWavPcm16(samples, sampleRate) {
+  const dataBytes = samples.length * 2;
+  const buf = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buf);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);          // chunk size
+  view.setUint16(20, 1, true);           // PCM
+  view.setUint16(22, 1, true);           // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate (mono * 16bit)
+  view.setUint16(32, 2, true);           // block align
+  view.setUint16(34, 16, true);          // bits per sample
+  writeStr(36, 'data');
+  view.setUint32(40, dataBytes, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    off += 2;
+  }
+  return buf;
+}
+
 function compressImage(file, maxPx = 1024, quality = 0.72) {
   return new Promise(resolve => {
     const img = new Image();
@@ -1156,9 +1242,19 @@ async function startRecording() {
       try {
         const dataUrl = await blobToDataUrl(blob);
 
-        // In AI chat: voice is transcribed and answered by AI
+        // In AI chat: send audio directly to gpt-4o-audio-preview (chat completions
+        // with input_audio). Browser converts mp4/webm → WAV for the model;
+        // original blob still goes as file_url for in-chat playback.
         if (CHAT_TYPE === 'ai') {
           showAITyping();
+          let wavUrl;
+          try {
+            wavUrl = await audioBlobToWavDataUrl(blob);
+          } catch (err) {
+            $list.querySelector('.typing-indicator')?.remove();
+            showToast('Не удалось обработать аудио');
+            return;
+          }
           const res = await fetch('/api/ai/media', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1166,7 +1262,8 @@ async function startRecording() {
               chat_id: CHAT_ID,
               user_id: USER_ID_INT,
               message_type: 'voice',
-              file_url: dataUrl,
+              file_url: dataUrl,        // оригинал для проигрывания
+              ai_audio_url: wavUrl,     // WAV для модели
               file_name: `voice_${Date.now()}`,
               file_size: blob.size,
               duration: durationSec,

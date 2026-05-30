@@ -1,5 +1,3 @@
-import base64
-import io
 import logging
 from typing import Optional
 
@@ -65,100 +63,22 @@ def build_messages(history: list, current: Optional[dict] = None) -> list:
     return msgs
 
 
-# llmost.ru не публикует точный id Whisper-модели — перебираем известные
-# варианты, первый успешный кешируется на время жизни процесса.
-_WHISPER_FALLBACKS = [
-    "openai/whisper-1",
-    "whisper-1",
-    "openai/whisper-large-v3",
-    "openai/gpt-4o-transcribe",
-    "openai/gpt-4o-mini-transcribe",
-]
-_whisper_model_cache: Optional[str] = None
-
-
-async def transcribe_voice(client: AsyncOpenAI, data_url: str) -> Optional[str]:
-    """Transcribe a base64 audio data URL. Tries configured + fallback models."""
-    global _whisper_model_cache
-
-    if "," not in data_url:
-        logger.warning("transcribe_voice: malformed data URL (no comma)")
-        return None
-
-    try:
-        header, b64 = data_url.split(",", 1)
-        audio_bytes = base64.b64decode(b64)
-    except Exception as e:
-        logger.error(f"transcribe_voice: base64 decode error: {e}")
-        return None
-
-    # Detect extension from mime
-    ext = "webm"
-    if "mp4" in header or "m4a" in header:
-        ext = "mp4"
-    elif "ogg" in header:
-        ext = "ogg"
-    elif "mpeg" in header or "mp3" in header:
-        ext = "mp3"
-    elif "wav" in header:
-        ext = "wav"
-
-    logger.info(
-        f"transcribe_voice: header={header!r}, bytes={len(audio_bytes)}, ext={ext}"
-    )
-
-    # Build attempt order: cached > configured > known fallbacks (deduped)
-    ordered: list[str] = []
-    if _whisper_model_cache:
-        ordered.append(_whisper_model_cache)
-    if settings.LLMOST_WHISPER_MODEL not in ordered:
-        ordered.append(settings.LLMOST_WHISPER_MODEL)
-    for c in _WHISPER_FALLBACKS:
-        if c not in ordered:
-            ordered.append(c)
-
-    last_err: Optional[Exception] = None
-    for model_id in ordered:
-        # Need a fresh BytesIO per attempt — the SDK consumes the stream.
-        audio_file = io.BytesIO(audio_bytes)
-        audio_file.name = f"voice.{ext}"
-        try:
-            transcript = await client.audio.transcriptions.create(
-                model=model_id,
-                file=audio_file,
-                language="ru",
-            )
-            text = (transcript.text or "").strip() if transcript else ""
-            if text:
-                logger.info(
-                    f"transcribe_voice: success model={model_id!r} chars={len(text)}"
-                )
-                _whisper_model_cache = model_id
-                return text
-            logger.warning(f"transcribe_voice: model={model_id!r} returned empty text")
-        except Exception as e:
-            last_err = e
-            logger.warning(
-                f"transcribe_voice: model={model_id!r} failed: "
-                f"{type(e).__name__}: {e}"
-            )
-            continue
-
-    logger.error(f"transcribe_voice: all candidates failed. Last error: {last_err}")
-    return None
-
-
 async def _send_error(chat_id: int, text: str):
     await manager.broadcast_to_chat(chat_id, {"type": "ai_error", "content": text})
 
 
-async def _stream_and_save(session, chat_id: int, messages: list):
+async def _stream_and_save(
+    session,
+    chat_id: int,
+    messages: list,
+    model: Optional[str] = None,
+):
     """Stream AI completion via WebSocket and save final message."""
     client = get_client()
     full_response = ""
     try:
         stream = await client.chat.completions.create(
-            model=settings.LLMOST_MODEL,
+            model=model or settings.LLMOST_MODEL,
             messages=messages,
             max_tokens=2048,
             stream=True,
@@ -252,11 +172,12 @@ class AIMediaIn(BaseModel):
     chat_id: int
     user_id: int
     message_type: str          # "image" | "voice"
-    file_url: str              # base64 data URL
+    file_url: str              # base64 data URL для хранения/проигрывания
     file_name: Optional[str] = None
     file_size: Optional[int] = None
     caption: Optional[str] = None
-    duration: Optional[int] = None   # voice duration in seconds
+    duration: Optional[int] = None       # voice duration in seconds
+    ai_audio_url: Optional[str] = None   # WAV-версия для gpt-4o-audio-preview
 
 
 @router.post("/media")
@@ -265,7 +186,6 @@ async def ai_media(data: AIMediaIn, session: AsyncSession = Depends(get_session)
         await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}
 
-    client = get_client()
     mtype = MessageType.image if data.message_type == "image" else MessageType.voice
 
     # For voice, content holds duration (player convention); for image, the caption
@@ -300,6 +220,7 @@ async def ai_media(data: AIMediaIn, session: AsyncSession = Depends(get_session)
     )
 
     history = await crud.get_messages(session, data.chat_id, limit=30)
+    use_audio_model = False
 
     # ── 2. Build the multimodal "current" message for the AI ──
     if mtype == MessageType.image:
@@ -316,28 +237,37 @@ async def ai_media(data: AIMediaIn, session: AsyncSession = Depends(get_session)
         }
         # History's last item is this image msg (content=None) — drop it, use `current`
         history = [m for m in history if m.id != user_msg.id]
-    else:  # voice → transcribe
-        await manager.broadcast_to_chat(
-            data.chat_id, {"type": "voice_transcript", "message_id": user_msg.id, "content": "Распознаю голос…"}
-        )
-        transcript = await transcribe_voice(client, data.file_url)
-        if not transcript:
+    else:  # voice → input_audio для gpt-4o-audio-preview
+        if not data.ai_audio_url or "," not in data.ai_audio_url:
             await _send_error(
                 data.chat_id,
-                "Не удалось распознать голосовое сообщение. Попробуйте отправить текстом."
+                "Не удалось обработать голос. Попробуйте отправить текстом."
             )
-            return {"ok": False, "error": "transcription_failed"}
+            return {"ok": False, "error": "no_ai_audio"}
 
-        # Show what was heard under the voice bubble (live, persisted via reload from edit below is skipped)
-        await manager.broadcast_to_chat(
-            data.chat_id,
-            {"type": "voice_transcript", "message_id": user_msg.id, "content": transcript},
+        _, audio_b64 = data.ai_audio_url.split(",", 1)
+        logger.info(
+            f"ai_media voice: audio_b64_len={len(audio_b64)}, model={settings.LLMOST_AUDIO_MODEL}"
         )
-        # History's last item is this voice msg (content=duration) — drop it, use transcript
+        current = {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Это голосовое сообщение пользователя. Ответьте на его суть как юрист.",
+                },
+                {
+                    "type": "input_audio",
+                    "input_audio": {"data": audio_b64, "format": "wav"},
+                },
+            ],
+        }
+        # History's last item is this voice msg (content=duration) — drop it
         history = [m for m in history if m.id != user_msg.id]
-        current = {"role": "user", "content": transcript}
+        use_audio_model = True
 
     messages = build_messages(history, current=current)
+    model_id = settings.LLMOST_AUDIO_MODEL if use_audio_model else None
 
-    ai_msg = await _stream_and_save(session, data.chat_id, messages)
+    ai_msg = await _stream_and_save(session, data.chat_id, messages, model=model_id)
     return {"ok": bool(ai_msg)}
