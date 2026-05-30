@@ -18,8 +18,8 @@ const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
   tg.expand();
-  try { tg.setHeaderColor('#000000'); } catch(e) {}
-  try { tg.setBackgroundColor('#000000'); } catch(e) {}
+  try { tg.setHeaderColor('#0a1024'); } catch(e) {}
+  try { tg.setBackgroundColor('#0a1024'); } catch(e) {}
   tg.BackButton.hide();
 }
 
