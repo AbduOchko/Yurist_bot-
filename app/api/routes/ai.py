@@ -65,37 +65,87 @@ def build_messages(history: list, current: Optional[dict] = None) -> list:
     return msgs
 
 
+# llmost.ru не публикует точный id Whisper-модели — перебираем известные
+# варианты, первый успешный кешируется на время жизни процесса.
+_WHISPER_FALLBACKS = [
+    "openai/whisper-1",
+    "whisper-1",
+    "openai/whisper-large-v3",
+    "openai/gpt-4o-transcribe",
+    "openai/gpt-4o-mini-transcribe",
+]
+_whisper_model_cache: Optional[str] = None
+
+
 async def transcribe_voice(client: AsyncOpenAI, data_url: str) -> Optional[str]:
-    """Transcribe a base64 audio data URL via Whisper."""
+    """Transcribe a base64 audio data URL. Tries configured + fallback models."""
+    global _whisper_model_cache
+
+    if "," not in data_url:
+        logger.warning("transcribe_voice: malformed data URL (no comma)")
+        return None
+
     try:
-        if "," not in data_url:
-            return None
         header, b64 = data_url.split(",", 1)
         audio_bytes = base64.b64decode(b64)
+    except Exception as e:
+        logger.error(f"transcribe_voice: base64 decode error: {e}")
+        return None
 
-        # Detect extension from mime
-        ext = "webm"
-        if "mp4" in header or "m4a" in header:
-            ext = "mp4"
-        elif "ogg" in header:
-            ext = "ogg"
-        elif "mpeg" in header or "mp3" in header:
-            ext = "mp3"
-        elif "wav" in header:
-            ext = "wav"
+    # Detect extension from mime
+    ext = "webm"
+    if "mp4" in header or "m4a" in header:
+        ext = "mp4"
+    elif "ogg" in header:
+        ext = "ogg"
+    elif "mpeg" in header or "mp3" in header:
+        ext = "mp3"
+    elif "wav" in header:
+        ext = "wav"
 
+    logger.info(
+        f"transcribe_voice: header={header!r}, bytes={len(audio_bytes)}, ext={ext}"
+    )
+
+    # Build attempt order: cached > configured > known fallbacks (deduped)
+    ordered: list[str] = []
+    if _whisper_model_cache:
+        ordered.append(_whisper_model_cache)
+    if settings.LLMOST_WHISPER_MODEL not in ordered:
+        ordered.append(settings.LLMOST_WHISPER_MODEL)
+    for c in _WHISPER_FALLBACKS:
+        if c not in ordered:
+            ordered.append(c)
+
+    last_err: Optional[Exception] = None
+    for model_id in ordered:
+        # Need a fresh BytesIO per attempt — the SDK consumes the stream.
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = f"voice.{ext}"
+        try:
+            transcript = await client.audio.transcriptions.create(
+                model=model_id,
+                file=audio_file,
+                language="ru",
+            )
+            text = (transcript.text or "").strip() if transcript else ""
+            if text:
+                logger.info(
+                    f"transcribe_voice: success model={model_id!r} chars={len(text)}"
+                )
+                _whisper_model_cache = model_id
+                return text
+            logger.warning(f"transcribe_voice: model={model_id!r} returned empty text")
+        except Exception as e:
+            last_err = e
+            logger.warning(
+                f"transcribe_voice: model={model_id!r} failed: "
+                f"{type(e).__name__}: {e}"
+            )
+            continue
 
-        transcript = await client.audio.transcriptions.create(
-            model=settings.LLMOST_WHISPER_MODEL,
-            file=audio_file,
-            language="ru",
-        )
-        return transcript.text.strip() if transcript and transcript.text else None
-    except Exception as e:
-        logger.error(f"Whisper transcription error: {type(e).__name__}: {e}")
-        return None
+    logger.error(f"transcribe_voice: all candidates failed. Last error: {last_err}")
+    return None
 
 
 async def _send_error(chat_id: int, text: str):
