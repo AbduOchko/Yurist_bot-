@@ -9,8 +9,12 @@ let CHATS = [];
 let CURRENT_CHAT_ID = null;
 let WS = null;
 
-const tg = window.Telegram?.WebApp;
-
+// NB: `tg` is already declared as a global `const` in the <head> inline script
+// of index.html. In classic (non-module) scripts, top-level `const`/`let`
+// declarations share a single script scope across all <script> tags, so
+// re-declaring it here would throw a SyntaxError at parse time and silently
+// kill the entire file (no event listeners attached). We just reuse the
+// global.
 const $ = (id) => document.getElementById(id);
 
 // ── Utils ─────────────────────────────────────
