@@ -4,7 +4,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
   <meta name="theme-color" content="#0a1024"/>
-  <title>Юрист Бот — Юрист</title>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Юрист Бот"/>
+  <meta name="description" content="Панель юриста — отвечайте на запросы клиентов в Юрист Боте."/>
+  <title>Панель юриста — Юрист Бот</title>
   <link rel="stylesheet" href="/staff/shared/staff.css"/>
   <link rel="stylesheet" href="/lawyer/css/lawyer.css"/>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -46,23 +50,26 @@
 
 <!-- ── Main app shell ─────────────────────────────────────────── -->
 <div id="appShell" class="lawyer-shell hidden">
-  <!-- LIST VIEW (visible by default) -->
+  <!-- LIST VIEW -->
   <section class="lawyer-view lawyer-list-view active" id="listView">
     <header class="lawyer-header">
       <div class="lawyer-header-info">
         <div class="lawyer-avatar" id="meAvatar">⚖️</div>
-        <div>
+        <div style="min-width:0">
           <div class="lawyer-header-name" id="meName">—</div>
           <div class="lawyer-header-sub" id="meRole">—</div>
         </div>
       </div>
       <div class="lawyer-header-actions">
-        <label class="online-switch" title="Онлайн-статус">
-          <input type="checkbox" id="onlineToggle"/>
-          <span class="online-track"><span class="online-thumb"></span></span>
-        </label>
-        <button class="icon-btn" id="logoutBtn" title="Выйти">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <div class="online-status">
+          <label class="online-switch" title="Онлайн-статус">
+            <input type="checkbox" id="onlineToggle" aria-label="Статус онлайн"/>
+            <span class="online-track"><span class="online-thumb"></span></span>
+          </label>
+          <span class="online-label" id="onlineLabel">Оффлайн</span>
+        </div>
+        <button class="icon-btn" id="logoutBtn" title="Выйти" aria-label="Выйти">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
     </header>
@@ -72,15 +79,15 @@
     <div class="lawyer-chat-list" id="chatList"></div>
   </section>
 
-  <!-- CHAT VIEW (hidden by default on mobile, side-by-side on desktop) -->
+  <!-- CHAT VIEW -->
   <section class="lawyer-view lawyer-chat-view" id="chatView">
     <header class="lawyer-chat-header">
-      <button class="icon-btn lawyer-back-btn" id="backBtn" title="Назад">
+      <button class="icon-btn lawyer-back-btn" id="backBtn" title="Назад" aria-label="Назад">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
       </button>
       <div class="lawyer-chat-header-info">
         <div class="lawyer-chat-avatar" id="chatAvatar">👤</div>
-        <div class="grow">
+        <div style="min-width:0;flex:1">
           <div class="lawyer-chat-header-name" id="chatHeaderName">—</div>
           <div class="lawyer-chat-header-sub" id="chatHeaderSub">—</div>
         </div>
@@ -90,23 +97,37 @@
     <div class="lawyer-chat-empty" id="chatEmpty">
       <div class="lawyer-chat-empty-icon">💬</div>
       <div>Выберите чат слева</div>
+      <div class="lawyer-chat-empty-hint" id="chatEmptyHint"></div>
     </div>
 
     <div class="lawyer-chat-claim-bar hidden" id="claimBar">
-      <span>🆕 Свободный запрос — ответьте, чтобы взять в работу</span>
+      🔔 Этот запрос свободен — нажмите «Отправить», чтобы взять его в работу
     </div>
 
     <div class="lawyer-messages hidden" id="chatMessages"></div>
 
     <footer class="lawyer-reply hidden" id="replyArea">
       <textarea class="lawyer-reply-input" id="replyInput" rows="1" placeholder="Ваш ответ…"></textarea>
-      <button class="lawyer-reply-send" id="replyBtn" title="Отправить">
+      <div class="lawyer-reply-counter" id="charCounter"></div>
+      <button class="lawyer-reply-send" id="replyBtn" title="Отправить" aria-label="Отправить">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
         </svg>
       </button>
     </footer>
   </section>
+</div>
+
+<!-- Logout confirmation modal -->
+<div class="confirm-modal hidden" id="logoutModal" role="dialog" aria-modal="true">
+  <div class="confirm-modal-card">
+    <div class="confirm-modal-title">Выйти из аккаунта?</div>
+    <div class="confirm-modal-text" id="logoutModalText">Вы выйдете из панели и потеряете доступ к чатам до следующего входа.</div>
+    <div class="confirm-modal-buttons">
+      <button class="confirm-modal-btn cancel" id="logoutCancel">Отмена</button>
+      <button class="confirm-modal-btn danger" id="logoutConfirm">Выйти</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast" class="toast"></div>
