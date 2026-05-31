@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0a1024"/>
   <title>Юрист Бот — Юрист</title>
   <link rel="stylesheet" href="/staff/shared/staff.css"/>
+  <link rel="stylesheet" href="/lawyer/css/lawyer.css"/>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script>
     const tg = window.Telegram?.WebApp;
@@ -16,7 +17,7 @@
     }
   </script>
 </head>
-<body>
+<body class="lawyer-body">
 
 <!-- ── Login screen ────────────────────────────────────────────── -->
 <div id="loginPage" class="login-page">
@@ -44,28 +45,68 @@
 </div>
 
 <!-- ── Main app shell ─────────────────────────────────────────── -->
-<div id="appShell" class="app-shell hidden">
-  <div class="app-header">
-    <div>
-      <div class="app-title">Юрист Бот</div>
-      <div class="app-subtitle" id="meSubtitle">—</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer">
-        <input type="checkbox" id="onlineToggle"/> Онлайн
-      </label>
-      <button class="btn-secondary" id="logoutBtn">Выйти</button>
-    </div>
-  </div>
-
-  <div class="app-body">
-    <div class="chat-layout">
-      <div class="chat-list-col" id="chatList"></div>
-      <div class="chat-detail-col" id="chatDetail">
-        <div class="chat-empty">Выберите чат слева</div>
+<div id="appShell" class="lawyer-shell hidden">
+  <!-- LIST VIEW (visible by default) -->
+  <section class="lawyer-view lawyer-list-view active" id="listView">
+    <header class="lawyer-header">
+      <div class="lawyer-header-info">
+        <div class="lawyer-avatar" id="meAvatar">⚖️</div>
+        <div>
+          <div class="lawyer-header-name" id="meName">—</div>
+          <div class="lawyer-header-sub" id="meRole">—</div>
+        </div>
       </div>
+      <div class="lawyer-header-actions">
+        <label class="online-switch" title="Онлайн-статус">
+          <input type="checkbox" id="onlineToggle"/>
+          <span class="online-track"><span class="online-thumb"></span></span>
+        </label>
+        <button class="icon-btn" id="logoutBtn" title="Выйти">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="lawyer-list-meta" id="listMeta">Загрузка…</div>
+
+    <div class="lawyer-chat-list" id="chatList"></div>
+  </section>
+
+  <!-- CHAT VIEW (hidden by default on mobile, side-by-side on desktop) -->
+  <section class="lawyer-view lawyer-chat-view" id="chatView">
+    <header class="lawyer-chat-header">
+      <button class="icon-btn lawyer-back-btn" id="backBtn" title="Назад">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
+      </button>
+      <div class="lawyer-chat-header-info">
+        <div class="lawyer-chat-avatar" id="chatAvatar">👤</div>
+        <div class="grow">
+          <div class="lawyer-chat-header-name" id="chatHeaderName">—</div>
+          <div class="lawyer-chat-header-sub" id="chatHeaderSub">—</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="lawyer-chat-empty" id="chatEmpty">
+      <div class="lawyer-chat-empty-icon">💬</div>
+      <div>Выберите чат слева</div>
     </div>
-  </div>
+
+    <div class="lawyer-chat-claim-bar hidden" id="claimBar">
+      <span>🆕 Свободный запрос — ответьте, чтобы взять в работу</span>
+    </div>
+
+    <div class="lawyer-messages hidden" id="chatMessages"></div>
+
+    <footer class="lawyer-reply hidden" id="replyArea">
+      <textarea class="lawyer-reply-input" id="replyInput" rows="1" placeholder="Ваш ответ…"></textarea>
+      <button class="lawyer-reply-send" id="replyBtn" title="Отправить">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
+        </svg>
+      </button>
+    </footer>
+  </section>
 </div>
 
 <div id="toast" class="toast"></div>

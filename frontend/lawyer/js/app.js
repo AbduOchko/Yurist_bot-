@@ -1,4 +1,4 @@
-/* Lawyer panel — login → list of assigned chats → reply */
+/* Lawyer panel — list + chat with mobile-first navigation. */
 
 const TOKEN_KEY = 'yurist_lawyer_token';
 let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
@@ -9,7 +9,7 @@ let WS = null;
 
 const $ = (id) => document.getElementById(id);
 
-// ── Utilities ─────────────────────────────────
+// ── Utils ─────────────────────────────────────
 function showToast(msg) {
   const t = $('toast');
   t.textContent = msg;
@@ -17,12 +17,22 @@ function showToast(msg) {
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => t.classList.remove('show'), 2500);
 }
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function initials(name) {
+  const parts = String(name || '').trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
 }
-
 function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const diffDays = Math.floor((now - d) / 86400000);
+  if (diffDays < 7) return d.toLocaleDateString('ru-RU', { weekday: 'short' });
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+}
+function fmtFull(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
@@ -33,9 +43,11 @@ async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(path, opts);
   if (res.status === 401) { logout(); throw new Error('Не авторизован'); }
-  let data = {};
-  try { data = await res.json(); } catch {}
-  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  let data = {}; try { data = await res.json(); } catch {}
+  if (!res.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
   return data;
 }
 
@@ -75,35 +87,52 @@ function showLogin() {
   $('appShell').classList.add('hidden');
   if (WS) { WS.close(); WS = null; }
 }
-
 function logout() {
   localStorage.removeItem(TOKEN_KEY);
   TOKEN = ''; ME = null;
   showLogin();
 }
 
-// ── App entry ─────────────────────────────────
-function enterApp() {
-  $('loginPage').classList.add('hidden');
-  $('appShell').classList.remove('hidden');
-  $('meSubtitle').textContent = `${ME.full_name} · ${ME.role === 'owner' ? 'Владелец (юрист-вид)' : 'Юрист'}`;
-  $('onlineToggle').checked = !!ME.is_online;
-  loadChats();
-  connectWS();
-}
-
 $('loginBtn').addEventListener('click', tryLogin);
 $('passwordInput').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
+$('loginInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('passwordInput').focus(); });
 $('logoutBtn').addEventListener('click', async () => {
   try { await api('POST', '/api/staff/logout', {}); } catch {}
   logout();
 });
 $('onlineToggle').addEventListener('change', async (e) => {
   try { await api('POST', '/api/lawyer/online', { is_online: e.target.checked }); }
-  catch (err) { showToast(err.message); }
+  catch (err) { showToast(err.message); e.target.checked = !e.target.checked; }
 });
 
-// ── Chat list ─────────────────────────────────
+// ── App entry ─────────────────────────────────
+function enterApp() {
+  $('loginPage').classList.add('hidden');
+  $('appShell').classList.remove('hidden');
+  $('meName').textContent = ME.full_name || 'Юрист';
+  $('meRole').textContent = ME.role === 'owner' ? 'Владелец · вид юриста' : (ME.specialization || 'Юрист');
+  $('meAvatar').textContent = initials(ME.full_name);
+  $('onlineToggle').checked = !!ME.is_online;
+  loadChats();
+  connectWS();
+}
+
+// ── View navigation (mobile) ─────────────────
+function showView(name) {
+  if (name === 'chat') {
+    $('listView').classList.remove('active');
+    $('chatView').classList.add('active');
+  } else {
+    $('chatView').classList.remove('active');
+    $('listView').classList.add('active');
+    CURRENT_CHAT_ID = null;
+    // re-highlight nothing
+    document.querySelectorAll('.lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
+  }
+}
+$('backBtn').addEventListener('click', () => showView('list'));
+
+// ── Load & render chat list ──────────────────
 async function loadChats() {
   try {
     CHATS = await api('GET', '/api/lawyer/chats');
@@ -113,81 +142,107 @@ async function loadChats() {
 
 function renderChats() {
   const wrap = $('chatList');
+  const meta = $('listMeta');
   if (!CHATS.length) {
-    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Пока нет назначенных чатов.</div>`;
+    meta.textContent = 'Чатов нет';
+    wrap.innerHTML = `
+      <div class="lawyer-list-empty">
+        <div class="lawyer-list-empty-icon">📭</div>
+        <div class="lawyer-list-empty-title">Пока тихо</div>
+        <div class="lawyer-list-empty-text">Когда пользователь напишет в «Личный юрист», запрос появится здесь.</div>
+      </div>`;
     return;
   }
+  const free = CHATS.filter(c => c.is_free).length;
+  const mine = CHATS.length - free;
+  meta.textContent = `${CHATS.length} чатов · 🆕 свободных: ${free} · ✔ ваших: ${mine}`;
+
   wrap.innerHTML = '';
   for (const chat of CHATS) {
-    const item = document.createElement('div');
-    item.className = 'chat-list-item';
-    if (chat.id === CURRENT_CHAT_ID) item.classList.add('active');
     const u = chat.user || {};
-    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
-    const preview = chat.last_message?.content || 'Нет сообщений';
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${chat.user_id}`;
+    const preview = chat.last_message?.content || '—';
+    const time = fmtTime(chat.last_message?.created_at || chat.updated_at);
+    const isFree = chat.is_free;
+    const isMine = !isFree && chat.lawyer_staff_id === ME.id;
+
+    const item = document.createElement('div');
+    item.className = 'lawyer-chat-item' + (chat.id === CURRENT_CHAT_ID ? ' active' : '');
+    item.dataset.id = chat.id;
     item.innerHTML = `
-      <div class="chat-item-name">${escapeHtml(name)}</div>
-      <div class="chat-item-preview">${escapeHtml(preview)}</div>
-      <div class="chat-item-meta">${chat.message_count} сообщ. · ${fmtTime(chat.updated_at)}</div>
-    `;
+      <div class="lawyer-chat-item-avatar">${
+        u.photo_url
+          ? `<img src="${escapeHtml(u.photo_url)}" alt=""/>`
+          : escapeHtml(initials(name))
+      }</div>
+      <div class="lawyer-chat-item-body">
+        <div class="lawyer-chat-item-top">
+          <div class="lawyer-chat-item-name">${escapeHtml(name)}</div>
+          <div class="lawyer-chat-item-time">${escapeHtml(time)}</div>
+        </div>
+        <div class="lawyer-chat-item-preview">${escapeHtml(preview)}</div>
+        <div class="lawyer-chat-item-badges">
+          ${isFree ? '<span class="lawyer-badge free">🆕 Свободный</span>' : ''}
+          ${isMine ? '<span class="lawyer-badge mine">✔ Ваш</span>' : ''}
+          <span class="lawyer-badge count">${chat.message_count} сообщ.</span>
+        </div>
+      </div>`;
     item.addEventListener('click', () => openChat(chat));
     wrap.appendChild(item);
   }
 }
 
-// ── Chat detail ───────────────────────────────
+// ── Open chat ─────────────────────────────────
 async function openChat(chat) {
   CURRENT_CHAT_ID = chat.id;
-  renderChats();
+  document.querySelectorAll('.lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.lawyer-chat-item[data-id="${chat.id}"]`)?.classList.add('active');
+
   const u = chat.user || {};
-  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
+  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${chat.user_id}`;
+  const sub = [
+    u.username ? '@' + u.username : null,
+    `TG ${u.telegram_id || '—'}`,
+  ].filter(Boolean).join(' · ');
 
-  const detail = $('chatDetail');
-  detail.innerHTML = `
-    <div class="chat-header-bar">
-      <div class="chat-header-name">${escapeHtml(name)}</div>
-      <div class="chat-header-meta">${u.username ? '@' + escapeHtml(u.username) : ''} · TG ${u.telegram_id || '—'}</div>
-    </div>
-    <div class="chat-messages" id="chatMessages"></div>
-    <div class="chat-reply-area">
-      <textarea class="chat-reply-input" id="replyInput" rows="1" placeholder="Сообщение пользователю..."></textarea>
-      <button class="chat-reply-send" id="replyBtn" title="Отправить">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
-        </svg>
-      </button>
-    </div>
-  `;
+  $('chatHeaderName').textContent = name;
+  $('chatHeaderSub').textContent = sub;
+  $('chatAvatar').innerHTML = u.photo_url
+    ? `<img src="${escapeHtml(u.photo_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
+    : escapeHtml(initials(name));
 
+  // Show claim bar if free
+  $('claimBar').classList.toggle('hidden', !chat.is_free);
+
+  // Hide empty state, show messages + reply
+  $('chatEmpty').style.display = 'none';
+  $('chatMessages').classList.remove('hidden');
+  $('replyArea').classList.remove('hidden');
+
+  showView('chat');
+
+  // Load messages
   try {
     const msgs = await api('GET', `/api/lawyer/chats/${chat.id}/messages`);
     renderMessages(msgs);
   } catch (e) { showToast(e.message); }
 
-  $('replyInput').addEventListener('input', (e) => {
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
-  });
-  $('replyInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); }
-  });
-  $('replyBtn').addEventListener('click', sendReply);
+  // Focus input
+  setTimeout(() => $('replyInput').focus(), 50);
 }
 
 function renderMessages(msgs) {
   const wrap = $('chatMessages');
-  if (!wrap) return;
   wrap.innerHTML = '';
-  for (const m of msgs) {
-    wrap.appendChild(messageEl(m));
-  }
+  for (const m of msgs) wrap.appendChild(messageEl(m));
   wrap.scrollTop = wrap.scrollHeight;
 }
 
 function messageEl(m) {
   const w = document.createElement('div');
-  const kind = m.sender_type === 'user' ? 'from-user' :
-               m.sender_type === 'system' ? 'from-system' : 'from-staff';
+  const kind = m.sender_type === 'user' ? 'from-user'
+             : m.sender_type === 'system' ? 'from-system'
+             : 'from-staff';
   w.className = `msg-wrap ${kind}`;
   if (kind === 'from-staff' && m.sender_name) {
     const s = document.createElement('div');
@@ -198,7 +253,7 @@ function messageEl(m) {
   const b = document.createElement('div');
   b.className = 'msg-bubble';
   if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
-    b.innerHTML = `<a href="${m.file_url}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
+    b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
     if (m.content) {
       const c = document.createElement('div');
       c.style.marginTop = '4px';
@@ -212,12 +267,13 @@ function messageEl(m) {
   if (m.created_at) {
     const t = document.createElement('div');
     t.className = 'msg-time';
-    t.textContent = fmtTime(m.created_at);
+    t.textContent = fmtFull(m.created_at);
     w.appendChild(t);
   }
   return w;
 }
 
+// ── Send reply ────────────────────────────────
 async function sendReply() {
   const input = $('replyInput');
   const text = input.value.trim();
@@ -227,14 +283,21 @@ async function sendReply() {
   try {
     const payload = await api('POST', `/api/lawyer/chats/${CURRENT_CHAT_ID}/messages`, { content: text });
     $('chatMessages').appendChild(messageEl(payload));
-    const m = $('chatMessages');
-    m.scrollTop = m.scrollHeight;
-    // Refresh sidebar
+    $('chatMessages').scrollTop = $('chatMessages').scrollHeight;
     loadChats();
-  } catch (e) { showToast(e.message); }
+  } catch (e) { showToast(e.message); input.value = text; }
 }
 
-// ── WebSocket for realtime updates ────────────
+$('replyBtn').addEventListener('click', sendReply);
+$('replyInput').addEventListener('input', (e) => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+});
+$('replyInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); }
+});
+
+// ── WebSocket ─────────────────────────────────
 function connectWS() {
   if (!TOKEN) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -243,14 +306,28 @@ function connectWS() {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
       if (data.chat_id === CURRENT_CHAT_ID) {
-        $('chatMessages')?.appendChild(messageEl(data));
-        const m = $('chatMessages');
-        if (m) m.scrollTop = m.scrollHeight;
+        // Avoid duplicate when own send echoes back
+        const exists = document.querySelector(`#chatMessages [data-mid="${data.id}"]`);
+        if (!exists) {
+          const el = messageEl(data);
+          el.dataset.mid = data.id;
+          $('chatMessages').appendChild(el);
+          $('chatMessages').scrollTop = $('chatMessages').scrollHeight;
+        }
       }
       loadChats();
     } else if (data.type === 'chat_assigned') {
-      loadChats();
       showToast('Вам назначен новый чат');
+      loadChats();
+    } else if (data.type === 'chat_claimed') {
+      // Another lawyer took a free chat — drop from our list if it's not ours
+      if (data.claimed_by !== ME.id) {
+        if (CURRENT_CHAT_ID === data.chat_id) {
+          showToast('Этот чат уже взял другой юрист');
+          showView('list');
+        }
+        loadChats();
+      }
     }
   };
   WS.onclose = () => setTimeout(connectWS, 3000);

@@ -101,6 +101,11 @@ class ConnectionManager:
     async def broadcast_to_lawyer(self, staff_id: int, data: Any):
         await self._broadcast_list(self.lawyer_connections.get(staff_id, []), data)
 
+    async def broadcast_to_all_lawyers(self, data: Any):
+        """Fan out to every connected lawyer (used for unassigned 'free pool' events)."""
+        for pool in list(self.lawyer_connections.values()):
+            await self._broadcast_list(pool, data)
+
     async def broadcast_to_staff_for_chat(self, chat: Chat, data: Any):
         """Dispatch a chat-event payload to the appropriate staff pools."""
         await self.broadcast_to_owners(data)
@@ -110,7 +115,9 @@ class ConnectionManager:
             if chat.lawyer_staff_id:
                 await self.broadcast_to_lawyer(chat.lawyer_staff_id, data)
             else:
+                # Free pool: every lawyer + managers (for assignment override)
                 await self.broadcast_to_managers(data)
+                await self.broadcast_to_all_lawyers(data)
         # AI chats: don't broadcast to staff
 
 

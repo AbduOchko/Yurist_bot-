@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,6 +33,8 @@ def _serialize_chat(chat: Chat) -> dict:
         "id": chat.id,
         "user_id": chat.user_id,
         "chat_type": chat.chat_type.value,
+        "lawyer_staff_id": chat.lawyer_staff_id,
+        "is_free": chat.lawyer_staff_id is None,
         "user": {
             "telegram_id": chat.user.telegram_id,
             "first_name": chat.user.first_name,
@@ -96,13 +98,15 @@ async def my_chats(
     staff: Staff = LawyerDep,
     session: AsyncSession = Depends(get_session),
 ):
-    # Owner sees all lawyer chats; lawyer sees only their own assigned.
+    # Lawyer sees: chats assigned to them + free-pool (unassigned) chats.
+    # First lawyer to reply auto-claims the chat (see send_chat_message).
+    # Owner sees all lawyer chats.
     q = select(Chat).options(
         selectinload(Chat.user),
         selectinload(Chat.messages),
     ).where(Chat.chat_type == ChatType.lawyer)
     if staff.role == StaffRole.lawyer:
-        q = q.where(Chat.lawyer_staff_id == staff.id)
+        q = q.where(or_(Chat.lawyer_staff_id == staff.id, Chat.lawyer_staff_id.is_(None)))
     q = q.order_by(Chat.updated_at.desc())
     result = await session.execute(q)
     return [_serialize_chat(c) for c in result.scalars().all()]
@@ -133,6 +137,46 @@ async def send_chat_message(
 ):
     chat = await assert_chat_access(session, staff, chat_id)
 
+    # Auto-claim: if the chat is in the free pool and this is a lawyer
+    # replying — assign them. Insert a visible system message so the user
+    # and other staff see who took the case.
+    if (
+        chat.chat_type == ChatType.lawyer
+        and chat.lawyer_staff_id is None
+        and staff.role == StaffRole.lawyer
+    ):
+        chat.lawyer_staff_id = staff.id
+        await session.commit()
+        await session.refresh(chat)
+
+        sys_msg = await crud.create_message(
+            session,
+            chat_id=chat_id,
+            sender_type=SenderType.system,
+            content=f"Юрист {staff.full_name} взял ваш запрос в работу.",
+            message_type=MessageType.system,
+            sender_name="Система",
+        )
+        sys_payload = {
+            "type": "message",
+            "id": sys_msg.id,
+            "chat_id": chat_id,
+            "sender_type": "system",
+            "sender_name": "Система",
+            "content": sys_msg.content,
+            "message_type": "system",
+            "created_at": sys_msg.created_at.isoformat(),
+        }
+        await manager.broadcast_to_chat(chat_id, sys_payload)
+        await manager.broadcast_to_staff_for_chat(chat, sys_payload)
+        # Tell other lawyers the chat is now taken — they should drop it from
+        # their free-pool list.
+        await manager.broadcast_to_all_lawyers({
+            "type": "chat_claimed",
+            "chat_id": chat_id,
+            "claimed_by": staff.id,
+        })
+
     msg = await crud.create_message(
         session,
         chat_id=chat_id,
@@ -155,7 +199,6 @@ async def send_chat_message(
         "message_type": "text",
         "created_at": msg.created_at.isoformat(),
     }
-    # Real-time fan-out: user (chat WS) + other relevant staff (staff WS).
     await manager.broadcast_to_chat(chat_id, payload)
     await manager.broadcast_to_staff_for_chat(chat, payload)
     return payload

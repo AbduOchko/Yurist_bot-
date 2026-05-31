@@ -100,7 +100,9 @@ async def assert_chat_access(session: AsyncSession, staff: Staff, chat_id: int) 
 
     Rules:
       - owner / manager: full access to any chat (read & write).
-      - lawyer: only chats where chat.chat_type == lawyer AND chat.lawyer_staff_id == self.id.
+      - lawyer: lawyer-type chats that are EITHER assigned to them OR currently
+        unassigned (free pool — first lawyer to reply auto-claims, see
+        lawyer.send_chat_message).
 
     Returns the Chat row on success, raises 404/403 otherwise.
     """
@@ -113,6 +115,7 @@ async def assert_chat_access(session: AsyncSession, staff: Staff, chat_id: int) 
         return chat
 
     # lawyer
-    if chat.chat_type == ChatType.lawyer and chat.lawyer_staff_id == staff.id:
-        return chat
+    if chat.chat_type == ChatType.lawyer:
+        if chat.lawyer_staff_id == staff.id or chat.lawyer_staff_id is None:
+            return chat
     raise HTTPException(status_code=403, detail="Нет доступа к этому чату")
