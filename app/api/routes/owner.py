@@ -5,7 +5,20 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _friendly_conflict(e: IntegrityError) -> str:
+    """Map common Postgres UNIQUE-violation messages to readable Russian."""
+    msg = str(getattr(e, "orig", "") or e).lower()
+    if "ux_staff_tg_role" in msg:
+        return "У этого Telegram ID уже есть такая роль"
+    if "ix_staff_login" in msg or ("login" in msg and "unique" in msg):
+        return "Логин уже занят"
+    if "required_channels" in msg and "channel_id" in msg:
+        return "Этот канал уже добавлен"
+    return "Конфликт: значение уже занято"
 
 from app.api.security import hash_password, require_role
 from app.db import crud
@@ -147,6 +160,19 @@ async def create_staff(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Логин уже занят")
 
+    if data.telegram_id:
+        existing_tg = await session.execute(
+            select(Staff).where(
+                Staff.telegram_id == data.telegram_id,
+                Staff.role == role,
+            )
+        )
+        if existing_tg.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f"У этого Telegram ID уже есть роль «{role.value}»",
+            )
+
     s = Staff(
         role=role,
         login=data.login.strip(),
@@ -157,7 +183,11 @@ async def create_staff(
         is_active=True,
     )
     session.add(s)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as e:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=_friendly_conflict(e))
     await session.refresh(s)
     return _serialize_staff(s)
 

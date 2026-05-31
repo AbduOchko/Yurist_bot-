@@ -7,6 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from sqlalchemy.exc import IntegrityError
+
+from app.api.routes.owner import _friendly_conflict
 from app.api.security import (
     assert_chat_access,
     hash_password,
@@ -189,10 +192,20 @@ async def create_lawyer(
     if len(data.password) < 8:
         raise HTTPException(status_code=400, detail="Пароль минимум 8 символов")
 
-    # uniqueness check
+    # uniqueness checks
     existing = await session.execute(select(Staff).where(Staff.login == data.login.strip()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Логин уже занят")
+
+    if data.telegram_id:
+        existing_tg = await session.execute(
+            select(Staff).where(
+                Staff.telegram_id == data.telegram_id,
+                Staff.role == StaffRole.lawyer,
+            )
+        )
+        if existing_tg.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="У этого Telegram ID уже есть роль юриста")
 
     lawyer = Staff(
         role=StaffRole.lawyer,
@@ -204,7 +217,11 @@ async def create_lawyer(
         is_active=True,
     )
     session.add(lawyer)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as e:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=_friendly_conflict(e))
     await session.refresh(lawyer)
     return _serialize_lawyer(lawyer)
 

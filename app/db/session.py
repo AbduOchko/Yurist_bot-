@@ -61,6 +61,18 @@ async def create_tables():
             "CREATE INDEX IF NOT EXISTS ix_chats_lawyer_staff_id ON chats (lawyer_staff_id);"
         ))
 
+        # ── Staff telegram_id: drop single-column UNIQUE (legacy) and replace
+        # with (telegram_id, role) partial unique. Allows one person to have
+        # multiple roles (e.g. owner who also acts as a lawyer for assignment).
+        await conn.execute(text("DROP INDEX IF EXISTS ix_staff_telegram_id;"))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_staff_telegram_id ON staff (telegram_id);"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_staff_tg_role "
+            "ON staff (telegram_id, role) WHERE telegram_id IS NOT NULL;"
+        ))
+
         # ── Orphaned-broadcast cleanup: anything still 'sending' after
         # a server restart is stuck; flip to 'failed' so it doesn't lie.
         await conn.execute(text(
