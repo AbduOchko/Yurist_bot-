@@ -70,49 +70,99 @@ async def create_tables():
 
 
 async def bootstrap_owner():
-    """Create the first owner from env vars if none exists.
+    """Create owner row(s) from env.
 
-    Idempotent: once an owner is in the staff table, this is a no-op even
-    if the env vars stay set.
+    OWNER_BOOTSTRAP_TELEGRAM_ID is a comma-separated list of telegram_ids;
+    one owner row is created per id (if none with that id already exists).
+    The first id in the list gets the clean OWNER_BOOTSTRAP_LOGIN; subsequent
+    ones get '<login>_<telegram_id>'. All share OWNER_BOOTSTRAP_PASSWORD
+    initially — each owner should change their own via the panel.
+
+    Adding new ids to the env var later and restarting will add new owners
+    without touching existing ones. Idempotent on second restart.
     """
     from app.api.security import hash_password
     from app.db.models import Staff, StaffRole
     from sqlalchemy import select
 
-    login = (settings.OWNER_BOOTSTRAP_LOGIN or "").strip()
+    login_base = (settings.OWNER_BOOTSTRAP_LOGIN or "").strip()
     password = settings.OWNER_BOOTSTRAP_PASSWORD or ""
 
-    if not login or not password:
+    if not login_base or not password:
         logger.info("Owner bootstrap skipped (OWNER_BOOTSTRAP_LOGIN/PASSWORD not set).")
         return
 
-    async with async_session_maker() as session:
-        existing = await session.execute(
-            select(Staff).where(Staff.role == StaffRole.owner)
+    if len(password) < 12:
+        logger.warning(
+            "OWNER_BOOTSTRAP_PASSWORD is shorter than 12 chars — change it after first login."
         )
-        if existing.scalar_one_or_none():
-            logger.info("Owner bootstrap skipped (an owner already exists).")
+
+    ids = settings.owner_bootstrap_telegram_ids
+    pwd_hash = hash_password(password)
+
+    async with async_session_maker() as session:
+        # ── Branch 1: no telegram_ids configured → fall back to single owner
+        # without a telegram_id (web-only access). Backward-compatible with the
+        # previous single-owner bootstrap.
+        if not ids:
+            existing = await session.execute(
+                select(Staff).where(Staff.role == StaffRole.owner)
+            )
+            if existing.scalar_one_or_none():
+                logger.info("Owner bootstrap skipped (an owner already exists, no IDs configured).")
+                return
+            owner = Staff(
+                role=StaffRole.owner,
+                login=login_base,
+                password_hash=pwd_hash,
+                full_name="Владелец",
+                is_active=True,
+            )
+            session.add(owner)
+            await session.commit()
+            logger.info(f"Bootstrap owner created (no telegram_id): login={login_base!r}")
             return
 
-        if len(password) < 12:
-            logger.warning(
-                "OWNER_BOOTSTRAP_PASSWORD is shorter than 12 chars — change it after first login."
+        # ── Branch 2: one or more telegram_ids → ensure each has its own owner row.
+        created = 0
+        for telegram_id in ids:
+            ex = await session.execute(
+                select(Staff).where(
+                    Staff.telegram_id == telegram_id,
+                    Staff.role == StaffRole.owner,
+                )
             )
+            if ex.scalar_one_or_none():
+                continue  # already exists, skip
 
-        owner = Staff(
-            role=StaffRole.owner,
-            login=login,
-            password_hash=hash_password(password),
-            full_name="Владелец",
-            telegram_id=settings.OWNER_BOOTSTRAP_TELEGRAM_ID or None,
-            is_active=True,
-        )
-        session.add(owner)
-        await session.commit()
-        logger.info(
-            f"Bootstrap owner created: login={login!r} "
-            f"telegram_id={settings.OWNER_BOOTSTRAP_TELEGRAM_ID or 'не задан — установите в панели'}"
-        )
+            # Pick a login: clean OWNER_BOOTSTRAP_LOGIN if free, otherwise suffix with telegram_id
+            candidate = login_base
+            ex_login = await session.execute(select(Staff).where(Staff.login == candidate))
+            if ex_login.scalar_one_or_none():
+                candidate = f"{login_base}_{telegram_id}"
+                # If even that's taken (extremely unlikely), suffix with a counter
+                n = 2
+                while True:
+                    ex_login2 = await session.execute(select(Staff).where(Staff.login == candidate))
+                    if not ex_login2.scalar_one_or_none():
+                        break
+                    candidate = f"{login_base}_{telegram_id}_{n}"
+                    n += 1
+
+            session.add(Staff(
+                role=StaffRole.owner,
+                login=candidate,
+                password_hash=pwd_hash,
+                full_name="Владелец",
+                telegram_id=telegram_id,
+                is_active=True,
+            ))
+            await session.commit()
+            logger.info(f"Bootstrap owner created: login={candidate!r} telegram_id={telegram_id}")
+            created += 1
+
+        if created == 0:
+            logger.info(f"Bootstrap: all {len(ids)} configured owner(s) already exist — no-op.")
 
 
 async def get_session() -> AsyncSession:

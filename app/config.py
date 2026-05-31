@@ -26,13 +26,25 @@ class Settings(BaseSettings):
     # Модель, принимающая голос как input_audio в /chat/completions.
     LLMOST_AUDIO_MODEL: str = "openai/gpt-4o-audio-preview"
 
-    # Bootstrap первого владельца (создаётся один раз при старте, если
-    # в таблице staff ещё нет роли owner). После первого логина владелец
-    # должен сменить пароль через панель. TELEGRAM_ID нужен для того,
-    # чтобы команда /owner в боте сразу же работала у этого пользователя.
+    # Bootstrap владельцев. TELEGRAM_ID — список ID через запятую (можно один).
+    # На каждый ID создаётся отдельная Staff-row с role=owner; первый получает
+    # логин OWNER_BOOTSTRAP_LOGIN как есть, остальные — <login>_<telegram_id>.
+    # Все стартуют с одного и того же пароля; каждый может сменить свой через
+    # панель. На рестарте проверяется, что для каждого id уже есть запись —
+    # дубликаты не создаются. Можно добавить новый ID и рестартнуть — он
+    # дозаведётся как ещё один владелец.
     OWNER_BOOTSTRAP_LOGIN: str = ""
     OWNER_BOOTSTRAP_PASSWORD: str = ""
-    OWNER_BOOTSTRAP_TELEGRAM_ID: Optional[int] = None
+    OWNER_BOOTSTRAP_TELEGRAM_ID: str = ""
+
+    @property
+    def owner_bootstrap_telegram_ids(self) -> list[int]:
+        out = []
+        for chunk in (self.OWNER_BOOTSTRAP_TELEGRAM_ID or "").split(","):
+            c = chunk.strip()
+            if c.lstrip("-").isdigit():
+                out.append(int(c))
+        return out
 
     # App
     WEBAPP_URL: str = "http://localhost:8000"
