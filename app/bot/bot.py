@@ -1,13 +1,18 @@
 import logging
+from typing import Optional
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from app.bot.handlers import start
+from app.bot.handlers import staff, start
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Singletons — broadcast service and webhook handler share the same Bot.
+_bot_singleton: Optional[Bot] = None
+_dp_singleton: Optional[Dispatcher] = None
 
 
 def create_bot() -> Bot:
@@ -20,7 +25,22 @@ def create_bot() -> Bot:
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher()
     dp.include_router(start.router)
+    dp.include_router(staff.router)
     return dp
+
+
+def get_bot() -> Bot:
+    global _bot_singleton
+    if _bot_singleton is None:
+        _bot_singleton = create_bot()
+    return _bot_singleton
+
+
+def get_dispatcher() -> Dispatcher:
+    global _dp_singleton
+    if _dp_singleton is None:
+        _dp_singleton = create_dispatcher()
+    return _dp_singleton
 
 
 async def setup_webhook(bot: Bot):

@@ -8,6 +8,7 @@ from app.api.websocket_manager import manager
 from app.db import crud
 from app.db.models import ChatType, MessageType, SenderType
 from app.db.session import get_session
+from app.services.subscription import verify_subscription
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
 
@@ -65,7 +66,11 @@ class MessageIn(BaseModel):
 
 
 @router.post("/")
-async def send_message(data: MessageIn, session: AsyncSession = Depends(get_session)):
+async def send_message(
+    data: MessageIn,
+    session: AsyncSession = Depends(get_session),
+    _sub=Depends(verify_subscription),
+):
     msg = await crud.create_message(
         session,
         chat_id=data.chat_id,
@@ -87,13 +92,13 @@ async def send_message(data: MessageIn, session: AsyncSession = Depends(get_sess
     payload = serialize_message(msg)
     await manager.broadcast_to_chat(data.chat_id, {"type": "message", **payload})
 
-    # Notify admins for lawyer/match chats
+    # Notify staff (manager / lawyer / owner) for non-AI chats
     chat = await crud.get_chat_by_id(session, data.chat_id)
     if chat and chat.chat_type in (ChatType.lawyer, ChatType.match):
-        await manager.broadcast_to_admins({
+        await manager.broadcast_to_staff_for_chat(chat, {
             "type": "new_message",
             "chat_id": data.chat_id,
-            "chat_type": chat.chat_type,
+            "chat_type": chat.chat_type.value,
             "user_id": chat.user_id,
             **payload,
         })

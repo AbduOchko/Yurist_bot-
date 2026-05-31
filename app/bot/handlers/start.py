@@ -2,12 +2,7 @@ import logging
 
 from aiogram import Bot, Router
 from aiogram.filters import Command
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-    WebAppInfo,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 from sqlalchemy import select
 
 from app.config import settings
@@ -50,7 +45,6 @@ async def cmd_start(message: Message, bot: Bot):
             last_name=message.from_user.last_name,
         )
 
-    # Save profile photo in background (non-blocking)
     await _save_user_photo(bot, message.from_user.id)
 
     webapp_url = settings.WEBAPP_URL.rstrip("/")
@@ -82,26 +76,4 @@ async def cmd_help(message: Message):
         "🤖 <b>ИИ-Советник</b> — мгновенные юридические консультации от ИИ\n"
         "👨‍💼 <b>Личный Юрист</b> — чат с живым юристом\n"
         "🔍 <b>Подбор Юриста</b> — помощь в поиске специалиста",
-    )
-
-
-@router.message(Command("admin"))
-async def cmd_admin(message: Message):
-    if message.from_user.id not in settings.admin_ids_list:
-        await message.answer("⛔️ У вас нет доступа к панели администратора.")
-        return
-
-    admin_url = settings.WEBAPP_URL.rstrip("/") + "/admin/"
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(
-                text="🛠 Открыть Панель Администратора",
-                web_app=WebAppInfo(url=admin_url),
-            )
-        ]]
-    )
-    await message.answer(
-        "🛠 <b>Панель администратора</b>\n\n"
-        "Нажмите кнопку ниже для входа в панель управления:",
-        reply_markup=keyboard,
     )

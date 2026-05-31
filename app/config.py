@@ -23,13 +23,14 @@ class Settings(BaseSettings):
     LLMOST_API_KEY: str = "your_llmost_api_key"
     LLMOST_BASE_URL: str = "https://llmost.ru/api/v1"
     LLMOST_MODEL: str = "openai/gpt-4o"
-    # Модель, которая принимает голос как input_audio в chat completions.
-    # llmost не имеет /audio/transcriptions — поэтому только этот путь.
+    # Модель, принимающая голос как input_audio в /chat/completions.
     LLMOST_AUDIO_MODEL: str = "openai/gpt-4o-audio-preview"
 
-    # Admin
-    ADMIN_PASSWORD: str = "admin123"
-    ADMIN_IDS: str = ""
+    # Bootstrap первого владельца (создаётся один раз при старте, если
+    # в таблице staff ещё нет роли owner). После первого логина владелец
+    # должен сменить пароль через панель.
+    OWNER_BOOTSTRAP_LOGIN: str = ""
+    OWNER_BOOTSTRAP_PASSWORD: str = ""
 
     # App
     WEBAPP_URL: str = "http://localhost:8000"
@@ -43,12 +44,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
-
-    @property
-    def admin_ids_list(self) -> list[int]:
-        if not self.ADMIN_IDS:
-            return []
-        return [int(x.strip()) for x in self.ADMIN_IDS.split(",") if x.strip()]
 
 
 settings = Settings()

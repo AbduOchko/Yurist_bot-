@@ -1,41 +1,17 @@
-import hashlib
-import hmac
 import re
-import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.security import hash_password, login_throttle, new_token, verify_password
 from app.db.models import User
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 LOGIN_RE = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9_]{3,30}$")
-
-_ITERATIONS = 260_000
-
-
-def _hash(password: str) -> str:
-    """PBKDF2-SHA256 with random salt — uses only Python stdlib."""
-    salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _ITERATIONS)
-    return f"{salt}${dk.hex()}"
-
-
-def _verify(plain: str, stored: str) -> bool:
-    try:
-        salt, dk_hex = stored.split("$", 1)
-    except ValueError:
-        return False
-    dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), _ITERATIONS)
-    return hmac.compare_digest(dk.hex(), dk_hex)
-
-
-def _token() -> str:
-    return secrets.token_urlsafe(32)
 
 
 class CheckIn(BaseModel):
@@ -98,13 +74,13 @@ async def register(data: RegisterIn, session: AsyncSession = Depends(get_session
     )
     user = result.scalar_one_or_none()
 
-    token = _token()
+    token = new_token()
 
     if user:
         if user.app_login:
             raise HTTPException(status_code=409, detail="Аккаунт уже существует")
         user.app_login = login
-        user.app_password_hash = _hash(data.password)
+        user.app_password_hash = hash_password(data.password)
         user.session_token = token
     else:
         user = User(
@@ -113,7 +89,7 @@ async def register(data: RegisterIn, session: AsyncSession = Depends(get_session
             first_name=data.first_name,
             last_name=data.last_name,
             app_login=login,
-            app_password_hash=_hash(data.password),
+            app_password_hash=hash_password(data.password),
             session_token=token,
         )
         session.add(user)
@@ -132,6 +108,7 @@ async def register(data: RegisterIn, session: AsyncSession = Depends(get_session
 @router.post("/login")
 async def login(data: LoginIn, session: AsyncSession = Depends(get_session)):
     login_str = data.login.strip()
+    login_throttle(f"user:{login_str.lower()}")
 
     # Find user by telegram_id first, then verify login matches
     result = await session.execute(
@@ -145,10 +122,10 @@ async def login(data: LoginIn, session: AsyncSession = Depends(get_session)):
     if user.app_login.lower() != login_str.lower():
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    if not _verify(data.password, user.app_password_hash):
+    if not verify_password(data.password, user.app_password_hash):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    token = _token()
+    token = new_token()
     user.session_token = token
     await session.commit()
 

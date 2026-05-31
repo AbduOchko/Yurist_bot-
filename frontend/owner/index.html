@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+  <meta name="theme-color" content="#0a1024"/>
+  <title>Юрист Бот — Владелец</title>
+  <link rel="stylesheet" href="/staff/shared/staff.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready(); tg.expand();
+      try { tg.setHeaderColor('#0a1024'); } catch(e) {}
+      try { tg.setBackgroundColor('#0a1024'); } catch(e) {}
+    }
+  </script>
+</head>
+<body>
+
+<div id="loginPage" class="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/>
+      </svg>
+    </div>
+    <div class="login-title">Панель владельца</div>
+    <div class="login-subtitle">Полный контроль над системой</div>
+    <div class="form-group"><label class="form-label">Логин</label><input id="loginInput" class="form-input"/></div>
+    <div class="form-group"><label class="form-label">Пароль</label><input id="passwordInput" class="form-input" type="password"/></div>
+    <button id="loginBtn" class="btn-primary">Войти</button>
+    <div id="loginError" class="form-error"></div>
+  </div>
+</div>
+
+<div id="appShell" class="app-shell hidden">
+  <div class="app-header">
+    <div>
+      <div class="app-title">👑 Юрист Бот</div>
+      <div class="app-subtitle" id="meSubtitle">—</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-secondary" id="changePwdBtn">Сменить пароль</button>
+      <button class="btn-secondary" id="logoutBtn">Выйти</button>
+    </div>
+  </div>
+
+  <div class="app-tabs">
+    <button class="app-tab active" data-tab="stats">📊 Статистика</button>
+    <button class="app-tab" data-tab="users">👥 Пользователи</button>
+    <button class="app-tab" data-tab="staff">⚖️ Сотрудники</button>
+    <button class="app-tab" data-tab="chats">💬 Чаты</button>
+    <button class="app-tab" data-tab="broadcast">📣 Рассылка</button>
+    <button class="app-tab" data-tab="channels">🔔 Подписка</button>
+    <button class="app-tab" data-tab="settings">⚙️ Настройки</button>
+  </div>
+
+  <div class="app-body">
+    <div class="app-panel active" id="tab-stats">
+      <div class="section-title">Статистика</div>
+      <div class="card-grid" id="statsGrid"></div>
+    </div>
+
+    <div class="app-panel" id="tab-users">
+      <div class="section-title">Пользователи</div>
+      <div class="data-list" id="usersList"></div>
+    </div>
+
+    <div class="app-panel" id="tab-staff">
+      <div class="section-title">Сотрудники</div>
+      <div class="toolbar">
+        <button class="btn-primary" style="width:auto;padding:10px 18px" id="addStaffBtn">+ Добавить сотрудника</button>
+      </div>
+      <div class="data-list" id="staffList"></div>
+    </div>
+
+    <div class="app-panel" id="tab-chats">
+      <div class="section-title">Все чаты</div>
+      <div class="section-sub">Чаты юристов с пользователями. Только просмотр.</div>
+      <div class="data-list" id="chatsList"></div>
+    </div>
+
+    <div class="app-panel" id="tab-broadcast">
+      <div class="section-title">Рассылка по всем пользователям</div>
+      <div class="section-sub">Сообщение придёт каждому пользователю бота в Telegram.</div>
+      <div class="form-group">
+        <label class="form-label">Текст</label>
+        <textarea id="broadcastText" class="form-input" rows="5" placeholder="Текст рассылки..."></textarea>
+      </div>
+      <button class="btn-primary" style="width:auto;padding:12px 24px" id="broadcastSendBtn">Отправить</button>
+      <div class="section-title" style="margin-top:24px">История рассылок</div>
+      <div class="data-list" id="broadcastsList"></div>
+    </div>
+
+    <div class="app-panel" id="tab-channels">
+      <div class="section-title">Обязательная подписка</div>
+      <div class="section-sub">Пользователь должен быть подписан на эти каналы. Бот должен быть админом каждого канала, иначе проверка не сработает.</div>
+      <div class="toolbar">
+        <button class="btn-primary" style="width:auto;padding:10px 18px" id="addChannelBtn">+ Добавить канал</button>
+      </div>
+      <div class="data-list" id="channelsList"></div>
+    </div>
+
+    <div class="app-panel" id="tab-settings">
+      <div class="section-title">Настройки</div>
+      <div class="data-list">
+        <div class="data-row">
+          <div class="grow">
+            <div class="data-name">Включить проверку подписки</div>
+            <div class="data-sub">Когда включено, перед отправкой сообщения проверяется подписка на обязательные каналы.</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="settingSubEnabled"/> Вкл
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- Modal: create staff -->
+<div id="staffModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-title" id="staffModalTitle">Новый сотрудник</div>
+    <div class="form-group">
+      <label class="form-label">Роль</label>
+      <select id="stRole" class="form-input">
+        <option value="lawyer">Юрист</option>
+        <option value="manager">Менеджер</option>
+        <option value="owner">Владелец</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">ФИО</label><input id="stName" class="form-input"/></div>
+    <div class="form-group"><label class="form-label">Логин</label><input id="stLogin" class="form-input"/></div>
+    <div class="form-group"><label class="form-label">Пароль (мин. 8)</label><input id="stPassword" class="form-input" type="password"/></div>
+    <div class="form-group"><label class="form-label">Специализация (для юриста)</label><input id="stSpec" class="form-input"/></div>
+    <div class="form-group"><label class="form-label">Telegram ID (для команд /lawyer, /manager, /owner)</label><input id="stTgId" class="form-input" type="number"/></div>
+    <div class="form-error" id="stError"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="stCancel">Отмена</button>
+      <button class="btn-primary" style="width:auto;padding:10px 18px" id="stSave">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: change own password -->
+<div id="pwdModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-title">Смена пароля</div>
+    <div class="form-group"><label class="form-label">Старый пароль</label><input id="pwdOld" class="form-input" type="password"/></div>
+    <div class="form-group"><label class="form-label">Новый пароль (мин. 8)</label><input id="pwdNew" class="form-input" type="password"/></div>
+    <div class="form-error" id="pwdError"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="pwdCancel">Отмена</button>
+      <button class="btn-primary" style="width:auto;padding:10px 18px" id="pwdSave">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: reset staff password -->
+<div id="resetPwdModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-title">Сброс пароля сотрудника</div>
+    <div id="resetPwdSub" style="margin-bottom:12px;color:var(--text-secondary);font-size:13px"></div>
+    <div class="form-group"><label class="form-label">Новый пароль (мин. 8)</label><input id="resetPwdNew" class="form-input" type="password"/></div>
+    <div class="form-error" id="resetPwdError"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="resetPwdCancel">Отмена</button>
+      <button class="btn-primary" style="width:auto;padding:10px 18px" id="resetPwdSave">Сбросить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: add channel -->
+<div id="channelModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-title">Добавить канал</div>
+    <div class="form-group"><label class="form-label">Telegram chat_id (числовой)</label><input id="chId" class="form-input" type="number"/></div>
+    <div class="form-group"><label class="form-label">Username (@channel)</label><input id="chUsername" class="form-input"/></div>
+    <div class="form-group"><label class="form-label">Название</label><input id="chTitle" class="form-input"/></div>
+    <div class="form-group"><label class="form-label">Ссылка для подписки</label><input id="chInvite" class="form-input"/></div>
+    <div class="form-error" id="chError"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="chCancel">Отмена</button>
+      <button class="btn-primary" style="width:auto;padding:10px 18px" id="chSave">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<script src="/owner/js/app.js"></script>
+</body>
+</html>

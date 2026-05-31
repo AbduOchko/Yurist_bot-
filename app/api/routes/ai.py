@@ -11,6 +11,7 @@ from app.config import settings
 from app.db import crud
 from app.db.models import MessageType, SenderType
 from app.db.session import get_session
+from app.services.subscription import verify_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,11 @@ class AIChatIn(BaseModel):
 
 
 @router.post("/chat")
-async def ai_chat(data: AIChatIn, session: AsyncSession = Depends(get_session)):
+async def ai_chat(
+    data: AIChatIn,
+    session: AsyncSession = Depends(get_session),
+    _sub=Depends(verify_subscription),
+):
     if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
         await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}
@@ -181,7 +186,11 @@ class AIMediaIn(BaseModel):
 
 
 @router.post("/media")
-async def ai_media(data: AIMediaIn, session: AsyncSession = Depends(get_session)):
+async def ai_media(
+    data: AIMediaIn,
+    session: AsyncSession = Depends(get_session),
+    _sub=Depends(verify_subscription),
+):
     if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
         await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}

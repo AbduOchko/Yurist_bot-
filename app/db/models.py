@@ -35,6 +35,19 @@ class SenderType(str, enum.Enum):
     system = "system"
 
 
+class StaffRole(str, enum.Enum):
+    owner = "owner"
+    manager = "manager"
+    lawyer = "lawyer"
+
+
+class BroadcastStatus(str, enum.Enum):
+    draft = "draft"
+    sending = "sending"
+    done = "done"
+    failed = "failed"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -43,7 +56,6 @@ class User(Base):
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
-    # App-level authentication
     app_login = Column(String(50), unique=True, nullable=True, index=True)
     app_password_hash = Column(String(255), nullable=True)
     session_token = Column(String(64), nullable=True, index=True)
@@ -59,15 +71,22 @@ class Chat(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     chat_type = Column(Enum(ChatType), nullable=False)
+    lawyer_staff_id = Column(
+        Integer,
+        ForeignKey("staff.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="chats")
+    lawyer = relationship("Staff", foreign_keys=[lawyer_staff_id])
     messages = relationship(
         "Message",
         back_populates="chat",
         order_by="Message.created_at",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
 
@@ -95,23 +114,50 @@ class Message(Base):
     reply_to = relationship("Message", remote_side="Message.id", foreign_keys=[reply_to_id])
 
 
-class Lawyer(Base):
-    __tablename__ = "lawyers"
+class Staff(Base):
+    __tablename__ = "staff"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=True)
-    name = Column(String(255), nullable=False)
+    role = Column(Enum(StaffRole), nullable=False, index=True)
+    login = Column(String(50), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
     specialization = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True)
     is_online = Column(Boolean, default=False)
+    session_token = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RequiredChannel(Base):
+    __tablename__ = "required_channels"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(BigInteger, unique=True, nullable=False)  # Telegram chat_id
+    username = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=False)
+    invite_url = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class Admin(Base):
-    __tablename__ = "admins"
+class Broadcast(Base):
+    __tablename__ = "broadcasts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False)
-    name = Column(String(255), nullable=False)
-    is_superadmin = Column(Boolean, default=False)
+    sender_staff_id = Column(Integer, ForeignKey("staff.id", ondelete="SET NULL"), nullable=True)
+    content = Column(Text, nullable=False)
+    recipients_total = Column(Integer, default=0)
+    recipients_sent = Column(Integer, default=0)
+    recipients_failed = Column(Integer, default=0)
+    status = Column(Enum(BroadcastStatus), default=BroadcastStatus.draft, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=True)

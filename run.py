@@ -18,25 +18,18 @@ logger = logging.getLogger(__name__)
 from app.api.server import app
 from app.config import settings
 
-# ── Bot (lazy init) ───────────────────────────
-_bot = None
-_dp = None
 
-
-def get_bot_dp():
-    global _bot, _dp
-    if _bot is None:
-        from app.bot.bot import create_bot, create_dispatcher
-        _bot = create_bot()
-        _dp = create_dispatcher()
-    return _bot, _dp
+def _bot_dp():
+    """Lazy access to the singleton Bot + Dispatcher (see app/bot/bot.py)."""
+    from app.bot.bot import get_bot, get_dispatcher
+    return get_bot(), get_dispatcher()
 
 
 # ── /webhook route — must be registered BEFORE static "/" mount ───────────────
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     try:
-        bot, dp = get_bot_dp()
+        bot, dp = _bot_dp()
         data = await request.json()
         update = Update.model_validate(data)
         await dp.feed_update(bot, update)
@@ -45,19 +38,20 @@ async def telegram_webhook(request: Request):
     return JSONResponse({"ok": True})
 
 
-# ── Static files at "/" — registered AFTER /webhook so it doesn't shadow it ──
+# ── Static files — registered AFTER /webhook so it doesn't shadow it ──
 frontend_path = Path(__file__).parent / "frontend"
 if frontend_path.exists():
-    app.mount(
-        "/admin",
-        StaticFiles(directory=str(frontend_path / "admin"), html=True),
-        name="admin",
-    )
-    app.mount(
-        "/",
-        StaticFiles(directory=str(frontend_path / "webapp"), html=True),
-        name="webapp",
-    )
+    # Staff panels (each at its own path)
+    if (frontend_path / "owner").exists():
+        app.mount("/owner", StaticFiles(directory=str(frontend_path / "owner"), html=True), name="owner")
+    if (frontend_path / "manager").exists():
+        app.mount("/manager", StaticFiles(directory=str(frontend_path / "manager"), html=True), name="manager")
+    if (frontend_path / "lawyer").exists():
+        app.mount("/lawyer", StaticFiles(directory=str(frontend_path / "lawyer"), html=True), name="lawyer")
+    if (frontend_path / "staff").exists():
+        app.mount("/staff", StaticFiles(directory=str(frontend_path / "staff"), html=True), name="staff")
+    # End-user webapp — must be last (mounted at "/")
+    app.mount("/", StaticFiles(directory=str(frontend_path / "webapp"), html=True), name="webapp")
     logger.info(f"Frontend mounted from {frontend_path}")
 else:
     logger.warning(f"Frontend not found at {frontend_path}")
@@ -68,7 +62,7 @@ async def setup_webhook_background():
     await asyncio.sleep(3)
     try:
         from app.bot.bot import setup_webhook
-        bot, _ = get_bot_dp()
+        bot, _ = _bot_dp()
         await setup_webhook(bot)
         logger.info("Webhook set up successfully")
     except Exception as e:
@@ -93,7 +87,7 @@ async def main():
     else:
         # Development: uvicorn + polling together
         from app.bot.bot import start_polling
-        bot, dp = get_bot_dp()
+        bot, dp = _bot_dp()
         await asyncio.gather(server.serve(), start_polling(bot, dp))
 
 

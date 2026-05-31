@@ -8,7 +8,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import admin, ai, auth, chats, files, messages, users, ws
+from app.api.routes import (
+    ai,
+    auth,
+    chats,
+    files,
+    lawyer,
+    manager,
+    messages,
+    owner,
+    staff_auth,
+    users,
+    ws,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +29,10 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     try:
-        from app.db.session import create_tables
+        from app.db.session import bootstrap_owner, create_tables
         await create_tables()
         logger.info("Database tables created/verified")
+        await bootstrap_owner()
     except Exception as e:
         logger.error(f"DB startup error (non-fatal): {e}")
 
@@ -29,7 +42,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
 
 
-app = FastAPI(title="Юрист Бот API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Юрист Бот API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,7 +99,10 @@ app.include_router(chats.router)
 app.include_router(messages.router)
 app.include_router(files.router)
 app.include_router(ai.router)
-app.include_router(admin.router)
+app.include_router(staff_auth.router)
+app.include_router(owner.router)
+app.include_router(manager.router)
+app.include_router(lawyer.router)
 app.include_router(ws.router)
 
 # NOTE: Static files at "/" are mounted in run.py AFTER /webhook is registered,
