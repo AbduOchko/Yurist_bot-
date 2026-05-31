@@ -104,11 +104,15 @@ async def bootstrap_owner():
             login=login,
             password_hash=hash_password(password),
             full_name="Владелец",
+            telegram_id=settings.OWNER_BOOTSTRAP_TELEGRAM_ID or None,
             is_active=True,
         )
         session.add(owner)
         await session.commit()
-        logger.info(f"Bootstrap owner created: login={login!r}")
+        logger.info(
+            f"Bootstrap owner created: login={login!r} "
+            f"telegram_id={settings.OWNER_BOOTSTRAP_TELEGRAM_ID or 'не задан — установите в панели'}"
+        )
 
 
 async def get_session() -> AsyncSession:

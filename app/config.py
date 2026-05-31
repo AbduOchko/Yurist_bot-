@@ -28,9 +28,11 @@ class Settings(BaseSettings):
 
     # Bootstrap первого владельца (создаётся один раз при старте, если
     # в таблице staff ещё нет роли owner). После первого логина владелец
-    # должен сменить пароль через панель.
+    # должен сменить пароль через панель. TELEGRAM_ID нужен для того,
+    # чтобы команда /owner в боте сразу же работала у этого пользователя.
     OWNER_BOOTSTRAP_LOGIN: str = ""
     OWNER_BOOTSTRAP_PASSWORD: str = ""
+    OWNER_BOOTSTRAP_TELEGRAM_ID: Optional[int] = None
 
     # App
     WEBAPP_URL: str = "http://localhost:8000"

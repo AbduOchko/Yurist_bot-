@@ -18,6 +18,15 @@ from app.db.session import async_session_maker
 logger = logging.getLogger(__name__)
 router = Router()
 
+NO_ACCESS_MSG = (
+    "⛔ У вас нет доступа к этой панели.\n\n"
+    "Если вы владелец и только что задеплоились — задайте в Railway переменные "
+    "<b>OWNER_BOOTSTRAP_LOGIN</b>, <b>OWNER_BOOTSTRAP_PASSWORD</b> и "
+    "<b>OWNER_BOOTSTRAP_TELEGRAM_ID</b>, после чего рестартните контейнер.\n\n"
+    "Если вы юрист или менеджер — попросите владельца добавить вас в панели "
+    "«Сотрудники» и указать ваш Telegram ID."
+)
+
 
 async def _find_staff(telegram_id: int, role: StaffRole) -> Staff | None:
     async with async_session_maker() as session:
@@ -44,7 +53,7 @@ def _panel_button(role: str, title: str) -> InlineKeyboardMarkup:
 async def cmd_owner(message: Message):
     s = await _find_staff(message.from_user.id, StaffRole.owner)
     if not s:
-        await message.answer("⛔ У вас нет доступа.")
+        await message.answer(NO_ACCESS_MSG)
         return
     await message.answer(
         f"👑 <b>Панель владельца</b>\n\nДобро пожаловать, {s.full_name}!",
@@ -59,7 +68,7 @@ async def cmd_manager(message: Message):
         # Owners can also open manager UI
         s = await _find_staff(message.from_user.id, StaffRole.owner)
         if not s:
-            await message.answer("⛔ У вас нет доступа.")
+            await message.answer(NO_ACCESS_MSG)
             return
     await message.answer(
         f"🧭 <b>Панель менеджера</b>\n\n{s.full_name}, открывайте панель:",
@@ -73,7 +82,7 @@ async def cmd_lawyer(message: Message):
     if not s:
         s = await _find_staff(message.from_user.id, StaffRole.owner)
         if not s:
-            await message.answer("⛔ У вас нет доступа.")
+            await message.answer(NO_ACCESS_MSG)
             return
     await message.answer(
         f"⚖️ <b>Панель юриста</b>\n\n{s.full_name}, открывайте панель:",
