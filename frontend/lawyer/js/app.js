@@ -238,8 +238,22 @@ function renderMessages(msgs) {
   wrap.scrollTop = wrap.scrollHeight;
 }
 
+// Append a message only if it isn't already on screen. Used by BOTH the HTTP
+// reply path and the WS broadcast path — they always carry the same payload
+// (sender's own WS connection echoes the broadcast back), so without this
+// dedup the lawyer sees every own message twice.
+function addMessageIfNew(m) {
+  if (m == null || m.id == null) return;
+  const wrap = $('chatMessages');
+  if (!wrap) return;
+  if (wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  wrap.appendChild(messageEl(m));
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
 function messageEl(m) {
   const w = document.createElement('div');
+  if (m.id != null) w.dataset.mid = m.id;
   const kind = m.sender_type === 'user' ? 'from-user'
              : m.sender_type === 'system' ? 'from-system'
              : 'from-staff';
@@ -282,8 +296,7 @@ async function sendReply() {
   input.style.height = 'auto';
   try {
     const payload = await api('POST', `/api/lawyer/chats/${CURRENT_CHAT_ID}/messages`, { content: text });
-    $('chatMessages').appendChild(messageEl(payload));
-    $('chatMessages').scrollTop = $('chatMessages').scrollHeight;
+    addMessageIfNew(payload);
     loadChats();
   } catch (e) { showToast(e.message); input.value = text; }
 }
@@ -305,16 +318,7 @@ function connectWS() {
   WS.onmessage = (e) => {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
-      if (data.chat_id === CURRENT_CHAT_ID) {
-        // Avoid duplicate when own send echoes back
-        const exists = document.querySelector(`#chatMessages [data-mid="${data.id}"]`);
-        if (!exists) {
-          const el = messageEl(data);
-          el.dataset.mid = data.id;
-          $('chatMessages').appendChild(el);
-          $('chatMessages').scrollTop = $('chatMessages').scrollHeight;
-        }
-      }
+      if (data.chat_id === CURRENT_CHAT_ID) addMessageIfNew(data);
       loadChats();
     } else if (data.type === 'chat_assigned') {
       showToast('Вам назначен новый чат');

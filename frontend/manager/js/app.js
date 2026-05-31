@@ -218,14 +218,26 @@ async function sendChatReply(chatId, apiBase) {
   input.value = '';
   try {
     const m = await api('POST', `${apiBase}/chats/${chatId}/messages`, { content: text });
-    const wrap = $(`cm-${chatId}`);
-    if (wrap) { wrap.appendChild(messageEl(m)); wrap.scrollTop = wrap.scrollHeight; }
+    addMessageIfNew(chatId, m);
     loadMatchChats(); loadLawyerChats();
   } catch (e) { showToast(e.message); }
 }
 
+// Append a message to chat #chatId only if it isn't already there.
+// Used by BOTH HTTP-reply and WS-broadcast paths — same payload comes
+// through both, dedup by message id via data-mid attribute.
+function addMessageIfNew(chatId, m) {
+  if (m == null || m.id == null) return;
+  const wrap = $(`cm-${chatId}`);
+  if (!wrap) return;
+  if (wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  wrap.appendChild(messageEl(m));
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
 function messageEl(m) {
   const w = document.createElement('div');
+  if (m.id != null) w.dataset.mid = m.id;
   const kind = m.sender_type === 'user' ? 'from-user' :
                m.sender_type === 'system' ? 'from-system' : 'from-staff';
   w.className = `msg-wrap ${kind}`;
@@ -354,12 +366,8 @@ function connectWS() {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
       const cid = data.chat_id;
-      if (cid === CURRENT_MATCH_ID) {
-        const wrap = $(`cm-${cid}`); if (wrap) { wrap.appendChild(messageEl(data)); wrap.scrollTop = wrap.scrollHeight; }
-      }
-      if (cid === CURRENT_LAWYER_CHAT_ID) {
-        const wrap = $(`cm-${cid}`); if (wrap) { wrap.appendChild(messageEl(data)); wrap.scrollTop = wrap.scrollHeight; }
-      }
+      if (cid === CURRENT_MATCH_ID) addMessageIfNew(cid, data);
+      if (cid === CURRENT_LAWYER_CHAT_ID) addMessageIfNew(cid, data);
       loadMatchChats(); loadLawyerChats();
     }
   };
