@@ -549,6 +549,33 @@ function addMessageIfNew(m) {
   }
 }
 
+/** Replace an existing message bubble in-place when the other side edits it. */
+function applyEditedMessage(data) {
+  const wrap = $('chatMessages');
+  const el = wrap?.querySelector(`[data-mid="${data.id}"]`);
+  if (!el) return;
+  const isCont = el.classList.contains('group-cont');
+  const isLastInGroup = el.classList.contains('group-last');
+  const sk = el.dataset.sk;
+  const fresh = messageEl(data, { isCont, isLastInGroup });
+  if (sk) fresh.dataset.sk = sk;
+  el.replaceWith(fresh);
+}
+
+/** Mark a message as deleted when the other side removes it. */
+function applyDeletedMessage(messageId) {
+  const wrap = $('chatMessages');
+  const el = wrap?.querySelector(`[data-mid="${messageId}"]`);
+  if (!el) return;
+  const b = el.querySelector('.msg-bubble');
+  if (b) {
+    b.textContent = 'Сообщение удалено';
+    b.style.opacity = '0.55';
+    b.style.fontStyle = 'italic';
+  }
+  el.querySelector('.msg-time')?.remove();
+}
+
 // ── Send reply ────────────────────────────────
 async function sendReply() {
   const input = $('replyInput');
@@ -634,6 +661,12 @@ function connectWS() {
         }
         if (data.sender_type === 'user') haptic('light');
       }
+      loadChats();
+    } else if (data.type === 'edit') {
+      applyEditedMessage(data);
+      loadChats();
+    } else if (data.type === 'delete') {
+      applyDeletedMessage(data.message_id);
       loadChats();
     } else if (data.type === 'chat_assigned') {
       haptic('warning');

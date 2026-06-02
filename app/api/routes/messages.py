@@ -120,7 +120,13 @@ async def edit_message(
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
     payload = serialize_message(msg)
-    await manager.broadcast_to_chat(msg.chat_id, {"type": "edit", **payload})
+    event = {"type": "edit", **payload}
+    await manager.broadcast_to_chat(msg.chat_id, event)
+    # Mirror the edit to staff panels (lawyer / manager / owner) so the other
+    # side sees the change live instead of only after re-opening the chat.
+    chat = await crud.get_chat_by_id(session, msg.chat_id)
+    if chat and chat.chat_type in (ChatType.lawyer, ChatType.match):
+        await manager.broadcast_to_staff_for_chat(chat, event)
     return payload
 
 
@@ -136,7 +142,12 @@ async def delete_message(message_id: int, session: AsyncSession = Depends(get_se
     chat_id = msg.chat_id
     ok = await crud.delete_message(session, message_id)
     if ok:
-        await manager.broadcast_to_chat(chat_id, {"type": "delete", "message_id": message_id})
+        event = {"type": "delete", "message_id": message_id}
+        await manager.broadcast_to_chat(chat_id, event)
+        # Mirror deletion to staff panels so the other side sees it live.
+        chat = await crud.get_chat_by_id(session, chat_id)
+        if chat and chat.chat_type in (ChatType.lawyer, ChatType.match):
+            await manager.broadcast_to_staff_for_chat(chat, event)
     return {"ok": ok}
 
 

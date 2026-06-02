@@ -257,6 +257,28 @@ function messageEl(m) {
   return w;
 }
 
+// Replace an edited message in-place inside its open chat pane.
+function applyEdit(data) {
+  const pane = $(`cm-${data.chat_id}`);
+  if (!pane) return;
+  const el = pane.querySelector(`[data-mid="${data.id}"]`);
+  if (!el) return;
+  el.replaceWith(messageEl(data));
+}
+
+// Mark a deleted message inside whichever open pane holds it.
+function applyDelete(messageId) {
+  const el = document.querySelector(`[data-mid="${messageId}"]`);
+  if (!el) return;
+  const b = el.querySelector('.msg-bubble');
+  if (b) {
+    b.textContent = 'Сообщение удалено';
+    b.style.opacity = '0.55';
+    b.style.fontStyle = 'italic';
+  }
+  el.querySelector('.msg-time')?.remove();
+}
+
 // ── Lawyers CRUD ──────────────────────────────
 async function loadLawyers() {
   try { LAWYERS = await api('GET', '/api/manager/lawyers'); renderLawyers(); }
@@ -368,6 +390,12 @@ function connectWS() {
       const cid = data.chat_id;
       if (cid === CURRENT_MATCH_ID) addMessageIfNew(cid, data);
       if (cid === CURRENT_LAWYER_CHAT_ID) addMessageIfNew(cid, data);
+      loadMatchChats(); loadLawyerChats();
+    } else if (data.type === 'edit') {
+      applyEdit(data);
+      loadMatchChats(); loadLawyerChats();
+    } else if (data.type === 'delete') {
+      applyDelete(data.message_id);
       loadMatchChats(); loadLawyerChats();
     }
   };
