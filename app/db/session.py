@@ -61,6 +61,11 @@ async def create_tables():
             "CREATE INDEX IF NOT EXISTS ix_chats_lawyer_staff_id ON chats (lawyer_staff_id);"
         ))
 
+        # ── Per-user "clear my history" cutoff ────────────────────────
+        await conn.execute(text(
+            "ALTER TABLE chats ADD COLUMN IF NOT EXISTS user_cleared_at TIMESTAMP;"
+        ))
+
         # ── Staff telegram_id: no uniqueness at all. One telegram_id may map to
         # any number of staff rows (multiple roles, or even several rows with the
         # same role). Drop the legacy single-column UNIQUE and the later
@@ -77,6 +82,24 @@ async def create_tables():
             "UPDATE broadcasts SET status = 'failed', finished_at = NOW() "
             "WHERE status = 'sending';"
         ))
+
+    # ── New ChatType value 'support' (direct chat with the owner). ──────
+    # ALTER TYPE ADD VALUE can't run inside a transaction on older Postgres,
+    # so use an autocommit connection. The enum type name is resolved by a
+    # value unique to ChatType ('match') so we don't hardcode it.
+    try:
+        ac_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+        async with ac_engine.connect() as conn:
+            typ = (await conn.execute(text(
+                "SELECT t.typname FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid "
+                "WHERE e.enumlabel = 'match' LIMIT 1;"
+            ))).scalar()
+            if typ:
+                await conn.execute(text(
+                    f'ALTER TYPE "{typ}" ADD VALUE IF NOT EXISTS \'support\';'
+                ))
+    except Exception as e:
+        logger.warning(f"Could not add 'support' to ChatType enum (non-fatal): {e}")
 
 
 async def bootstrap_owner():

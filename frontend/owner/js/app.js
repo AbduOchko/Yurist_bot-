@@ -4,6 +4,9 @@ const TOKEN_KEY = 'yurist_owner_token';
 let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
 let ME = null;
 let RESET_STAFF_ID = null;
+let WS = null;
+let SUPPORT_CHATS = [];
+let CURRENT_SUPPORT_ID = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -63,6 +66,7 @@ async function checkAuth() {
 function showLogin() {
   $('loginPage').classList.remove('hidden');
   $('appShell').classList.add('hidden');
+  if (WS) { WS.close(); WS = null; }
 }
 function logout() {
   localStorage.removeItem(TOKEN_KEY);
@@ -82,6 +86,7 @@ function enterApp() {
   $('appShell').classList.remove('hidden');
   $('meSubtitle').textContent = `${ME.full_name} · Владелец`;
   loadStats();
+  connectWS();
 }
 
 document.querySelectorAll('.app-tab').forEach(btn => {
@@ -92,8 +97,8 @@ document.querySelectorAll('.app-tab').forEach(btn => {
     $('tab-' + btn.dataset.tab).classList.add('active');
     const map = {
       stats: loadStats, users: loadUsers, staff: loadStaff,
-      chats: loadAllChats, broadcast: loadBroadcasts, channels: loadChannels,
-      settings: loadSettings,
+      chats: loadAllChats, support: loadSupportChats, broadcast: loadBroadcasts,
+      channels: loadChannels, settings: loadSettings,
     };
     if (map[btn.dataset.tab]) map[btn.dataset.tab]();
   });
@@ -372,5 +377,142 @@ $('settingSubEnabled').addEventListener('change', async (e) => {
     showToast('Сохранено');
   } catch (err) { showToast(err.message); }
 });
+
+// ── Support chats (прямой чат пользователя с владельцем) ───────────────
+async function loadSupportChats() {
+  try { SUPPORT_CHATS = await api('GET', '/api/owner/support-chats'); renderSupportList(); }
+  catch (e) { showToast(e.message); }
+}
+
+function renderSupportList() {
+  const wrap = $('supportList');
+  if (!SUPPORT_CHATS.length) {
+    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Обращений в поддержку пока нет.</div>`;
+    return;
+  }
+  wrap.innerHTML = '';
+  for (const chat of SUPPORT_CHATS) {
+    const item = document.createElement('div');
+    item.className = 'chat-list-item';
+    if (chat.id === CURRENT_SUPPORT_ID) item.classList.add('active');
+    const u = chat.user || {};
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
+    item.innerHTML = `
+      <div class="chat-item-name">${escapeHtml(name)}</div>
+      <div class="chat-item-preview">${escapeHtml(chat.last_message?.content || 'Нет сообщений')}</div>
+      <div class="chat-item-meta">${chat.message_count} сообщ. · ${fmtTime(chat.updated_at)}</div>`;
+    item.addEventListener('click', () => openSupportChat(chat));
+    wrap.appendChild(item);
+  }
+}
+
+async function openSupportChat(chat) {
+  CURRENT_SUPPORT_ID = chat.id;
+  renderSupportList();
+  const u = chat.user || {};
+  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
+  const detail = $('supportDetail');
+  detail.innerHTML = `
+    <div class="chat-header-bar" style="display:flex;align-items:center">
+      <div style="flex:1">
+        <div class="chat-header-name">${escapeHtml(name)}</div>
+        <div class="chat-header-meta">${u.username ? '@' + escapeHtml(u.username) : ''} · TG ${u.telegram_id || '—'}</div>
+      </div>
+    </div>
+    <div class="chat-messages" id="scm-${chat.id}"></div>
+    <div class="chat-reply-area">
+      <textarea class="chat-reply-input" id="sri-${chat.id}" rows="1" placeholder="Ответ пользователю..."></textarea>
+      <button class="chat-reply-send" id="srb-${chat.id}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
+        </svg>
+      </button>
+    </div>`;
+  try {
+    const msgs = await api('GET', `/api/manager/chats/${chat.id}/messages`);
+    const wrap = $(`scm-${chat.id}`);
+    msgs.forEach(m => wrap.appendChild(supportMessageEl(m)));
+    wrap.scrollTop = wrap.scrollHeight;
+  } catch (e) { showToast(e.message); }
+
+  $(`sri-${chat.id}`).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendSupportReply(chat.id); }
+  });
+  $(`srb-${chat.id}`).addEventListener('click', () => sendSupportReply(chat.id));
+}
+
+async function sendSupportReply(chatId) {
+  const input = $(`sri-${chatId}`);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  try {
+    // ManagerDep допускает роль owner — отправляем как сотрудник.
+    const m = await api('POST', `/api/manager/chats/${chatId}/messages`, { content: text });
+    addSupportMessageIfNew(chatId, m);
+    loadSupportChats();
+  } catch (e) { showToast(e.message); }
+}
+
+function addSupportMessageIfNew(chatId, m) {
+  if (m == null || m.id == null) return;
+  const wrap = $(`scm-${chatId}`);
+  if (!wrap) return;
+  if (wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  wrap.appendChild(supportMessageEl(m));
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function supportMessageEl(m) {
+  const w = document.createElement('div');
+  if (m.id != null) w.dataset.mid = m.id;
+  const kind = m.sender_type === 'user' ? 'from-user' :
+               m.sender_type === 'system' ? 'from-system' : 'from-staff';
+  w.className = `msg-wrap ${kind}`;
+  if (kind === 'from-staff' && m.sender_name) {
+    const s = document.createElement('div'); s.className = 'msg-sender'; s.textContent = m.sender_name; w.appendChild(s);
+  }
+  const b = document.createElement('div'); b.className = 'msg-bubble';
+  if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
+    b.innerHTML = `<a href="${m.file_url}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
+  } else {
+    b.textContent = m.content || '';
+  }
+  w.appendChild(b);
+  if (m.created_at) {
+    const t = document.createElement('div'); t.className = 'msg-time'; t.textContent = fmtTime(m.created_at); w.appendChild(t);
+  }
+  return w;
+}
+
+// ── WebSocket (live support + chat events) ─────────────────────────────
+function connectWS() {
+  if (!TOKEN) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  WS = new WebSocket(`${proto}://${location.host}/ws/staff?token=${encodeURIComponent(TOKEN)}`);
+  WS.onmessage = (e) => {
+    let data; try { data = JSON.parse(e.data); } catch { return; }
+    if (data.type === 'message' || data.type === 'new_message') {
+      if (data.chat_id === CURRENT_SUPPORT_ID) addSupportMessageIfNew(data.chat_id, data);
+      loadSupportChats();
+    } else if (data.type === 'edit') {
+      const wrap = $(`scm-${data.chat_id}`);
+      const el = wrap?.querySelector(`[data-mid="${data.id}"]`);
+      if (el) el.replaceWith(supportMessageEl(data));
+      loadSupportChats();
+    } else if (data.type === 'delete') {
+      const el = document.querySelector(`[data-mid="${data.message_id}"]`);
+      if (el) {
+        const b = el.querySelector('.msg-bubble');
+        if (b) { b.textContent = 'Сообщение удалено'; b.style.opacity = '0.55'; b.style.fontStyle = 'italic'; }
+        el.querySelector('.msg-time')?.remove();
+      }
+      loadSupportChats();
+    }
+  };
+  WS.onclose = () => setTimeout(connectWS, 3000);
+  setInterval(() => { try { WS?.send(JSON.stringify({ type: 'ping' })); } catch {} }, 25000);
+}
 
 checkAuth();

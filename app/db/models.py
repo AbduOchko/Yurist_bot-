@@ -16,6 +16,7 @@ class ChatType(str, enum.Enum):
     ai = "ai"
     lawyer = "lawyer"
     match = "match"
+    support = "support"  # прямой чат с владельцем проекта
 
 
 class MessageType(str, enum.Enum):
@@ -79,6 +80,10 @@ class Chat(Base):
     )
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Момент, до которого пользователь «очистил» историю у себя. Сообщения с
+    # created_at <= user_cleared_at не показываются пользователю (и не идут в
+    # контекст ИИ), но остаются в БД и видны персоналу.
+    user_cleared_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="chats")
     lawyer = relationship("Staff", foreign_keys=[lawyer_staff_id])

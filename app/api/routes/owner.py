@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete as sql_delete, func, select, update as sql_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 
 def _friendly_conflict(e: IntegrityError) -> str:
@@ -52,6 +53,51 @@ def _serialize_staff(s: Staff) -> dict:
         "is_online": s.is_online,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
+
+
+def _serialize_support_chat(c: Chat) -> dict:
+    non_deleted = [m for m in c.messages if not m.is_deleted] if c.messages else []
+    last_msg = None
+    if non_deleted:
+        lm = non_deleted[-1]
+        last_msg = {
+            "content": lm.content,
+            "sender_type": lm.sender_type.value if lm.sender_type else None,
+            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+        }
+    return {
+        "id": c.id,
+        "user_id": c.user_id,
+        "chat_type": c.chat_type.value,
+        "user": {
+            "telegram_id": c.user.telegram_id,
+            "first_name": c.user.first_name,
+            "last_name": c.user.last_name,
+            "username": c.user.username,
+            "photo_url": c.user.photo_url,
+        },
+        "message_count": len(non_deleted),
+        "last_message": last_msg,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+# ── Support chats (прямой чат пользователя с владельцем) ──────────────
+@router.get("/support-chats")
+async def list_support_chats(
+    staff: Staff = OwnerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    q = (
+        select(Chat)
+        .options(selectinload(Chat.user), selectinload(Chat.messages))
+        .where(Chat.chat_type == ChatType.support)
+        .order_by(Chat.updated_at.desc())
+    )
+    result = await session.execute(q)
+    # Чтение и отправка сообщений идут через /api/manager/chats/{id}/messages
+    # (ManagerDep уже допускает роль owner), отдельные эндпоинты не нужны.
+    return [_serialize_support_chat(c) for c in result.scalars().all()]
 
 
 # ── Stats ─────────────────────────────────────────────────────────────

@@ -172,7 +172,9 @@ async def ai_chat(
         },
     )
 
-    history = await crud.get_messages(session, data.chat_id, limit=30)
+    chat = await crud.get_chat_by_id(session, data.chat_id)
+    after = chat.user_cleared_at if chat else None
+    history = await crud.get_messages(session, data.chat_id, limit=30, after=after)
     messages = build_messages(history)
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": data.user_message})
@@ -285,7 +287,9 @@ async def ai_media(
         "Если это документ — разберите его содержание и правовые нюансы."
     )
 
-    history = await crud.get_messages(session, data.chat_id, limit=30)
+    chat = await crud.get_chat_by_id(session, data.chat_id)
+    after = chat.user_cleared_at if chat else None
+    history = await crud.get_messages(session, data.chat_id, limit=30, after=after)
     history = [m for m in history if m.id != user_msg.id]  # drop the just-saved image msg
     current = {
         "role": "user",

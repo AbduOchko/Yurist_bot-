@@ -70,15 +70,19 @@ async def get_messages(
     chat_id: int,
     limit: int = 50,
     offset: int = 0,
+    after: Optional[datetime] = None,
 ) -> List[Message]:
-    result = await session.execute(
+    q = (
         select(Message)
         .options(selectinload(Message.reply_to))
         .where(Message.chat_id == chat_id, Message.is_deleted == False)
-        .order_by(Message.created_at.asc())
-        .limit(limit)
-        .offset(offset)
     )
+    # `after` — пользовательская отметка очистки истории: скрывает всё, что было
+    # до неё (используется только на стороне пользователя/ИИ, не для персонала).
+    if after is not None:
+        q = q.where(Message.created_at > after)
+    q = q.order_by(Message.created_at.asc()).limit(limit).offset(offset)
+    result = await session.execute(q)
     return list(result.scalars().all())
 
 

@@ -48,9 +48,10 @@ const CHAT_TYPE = params.get('type') || 'ai';
 const API_BASE = '';  // same origin
 
 const CHAT_CONFIG = {
-  ai:     { title: 'ИИ-Советник',    status: 'Всегда онлайн', icon: 'ai'     },
-  lawyer: { title: 'Личный Юрист',   status: 'онлайн',         icon: 'lawyer' },
-  match:  { title: 'Подбор Юриста',  status: 'онлайн',         icon: 'match'  },
+  ai:      { title: 'ИИ-Советник',    status: 'Всегда онлайн', icon: 'ai'      },
+  lawyer:  { title: 'Личный Юрист',   status: 'онлайн',         icon: 'lawyer'  },
+  match:   { title: 'Подбор Юриста',  status: 'онлайн',         icon: 'match'   },
+  support: { title: 'Поддержка',      status: 'онлайн',         icon: 'support' },
 };
 
 const FORWARD_TARGETS = {
@@ -154,6 +155,7 @@ function setChatAvatar(type) {
     ai:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>`,
     lawyer: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
     match:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`,
+    support:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg>`,
   };
   document.getElementById('chatAvatar').innerHTML = icons[type] || icons.ai;
 }
@@ -294,6 +296,7 @@ function renderEmpty() {
     ai:     { icon: '🤖', title: 'ИИ-Советник готов',    text: 'Задайте любой юридический вопрос — получите профессиональный ответ мгновенно.' },
     lawyer: { icon: '👨‍💼', title: 'Личный Юрист',        text: 'Напишите ваш вопрос — юрист ответит в ближайшее время.' },
     match:  { icon: '🔍', title: 'Подбор Юриста',        text: 'Опишите вашу проблему — мы подберём подходящего специалиста.' },
+    support:{ icon: '🛟', title: 'Поддержка',            text: 'Напишите ваш вопрос — владелец проекта ответит вам напрямую.' },
   };
   const p = prompts[CHAT_TYPE];
   $list.innerHTML = `

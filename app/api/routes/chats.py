@@ -1,9 +1,19 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.crud import get_or_create_chat, get_chat_by_id, get_pinned_messages
-from app.db.models import ChatType
+from app.api.websocket_manager import manager
+from app.db.crud import (
+    create_message,
+    get_or_create_chat,
+    get_chat_by_id,
+    get_pinned_messages,
+    get_user_by_telegram_id,
+)
+from app.db.models import Chat, ChatType, MessageType, SenderType
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -50,3 +60,60 @@ async def get_pinned(chat_id: int, session: AsyncSession = Depends(get_session))
         }
         for m in messages
     ]
+
+
+class ClearChatIn(BaseModel):
+    telegram_id: int
+    chat_type: ChatType
+
+
+@router.post("/clear")
+async def clear_chat(data: ClearChatIn, session: AsyncSession = Depends(get_session)):
+    """Clear chat history for THIS user only.
+
+    Sets a per-user cutoff (chat.user_cleared_at) — the user (and, for the AI
+    chat, the model's context) no longer sees anything before it, but the
+    messages stay in the DB and remain fully visible to staff. For staff-facing
+    chats a system note is added so the lawyer / manager / owner sees that the
+    user wiped their side.
+    """
+    user = await get_user_by_telegram_id(session, data.telegram_id)
+    if not user:
+        return {"ok": True, "cleared": False}
+
+    result = await session.execute(
+        select(Chat).where(Chat.user_id == user.id, Chat.chat_type == data.chat_type)
+    )
+    chat = result.scalar_one_or_none()
+    if not chat:
+        return {"ok": True, "cleared": False}  # nothing to clear yet
+
+    if data.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support):
+        sys_msg = await create_message(
+            session,
+            chat_id=chat.id,
+            sender_type=SenderType.system,
+            content="🧹 Пользователь очистил историю переписки на своей стороне.",
+            message_type=MessageType.system,
+            sender_name="Система",
+        )
+        # Cutoff == the note's timestamp → the note itself stays hidden from the
+        # user (filter is strictly ">") but is visible to staff.
+        chat.user_cleared_at = sys_msg.created_at
+        await session.commit()
+        await manager.broadcast_to_staff_for_chat(chat, {
+            "type": "message",
+            "id": sys_msg.id,
+            "chat_id": chat.id,
+            "sender_type": "system",
+            "sender_name": "Система",
+            "content": sys_msg.content,
+            "message_type": "system",
+            "created_at": sys_msg.created_at.isoformat(),
+        })
+    else:
+        # AI chat — no staff side, just move the cutoff to now.
+        chat.user_cleared_at = datetime.utcnow()
+        await session.commit()
+
+    return {"ok": True, "cleared": True}

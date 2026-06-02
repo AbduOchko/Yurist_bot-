@@ -111,6 +111,12 @@ async def assert_chat_access(session: AsyncSession, staff: Staff, chat_id: int) 
     if not chat:
         raise HTTPException(status_code=404, detail="Чат не найден")
 
+    # Support chats are the owner's domain only (manager/lawyer have no access).
+    if chat.chat_type == ChatType.support:
+        if staff.role == StaffRole.owner:
+            return chat
+        raise HTTPException(status_code=403, detail="Чат поддержки доступен только владельцу")
+
     if staff.role in (StaffRole.owner, StaffRole.manager):
         return chat
 

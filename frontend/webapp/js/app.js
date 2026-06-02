@@ -223,6 +223,33 @@ function logout() {
   location.reload();
 }
 
+// ── Toast ─────────────────────────────────
+let _toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── Clear chat history (only on the user's side) ──
+async function clearHistory(chatType, label) {
+  if (!confirm(`Очистить историю «${label}»?\n\nУ вас она исчезнет, но у собеседника сохранится.`)) return;
+  try {
+    const res = await fetch('/api/chats/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telegram_id: TG_ID, chat_type: chatType }),
+    });
+    if (!res.ok) throw new Error();
+    showToast(`История «${label}» очищена`);
+  } catch {
+    showToast('Не удалось очистить историю');
+  }
+}
+
 // ── Profile ───────────────────────────────
 function loadProfile(login, photoUrl) {
   const name = TG_USER
