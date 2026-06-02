@@ -19,12 +19,17 @@ class Settings(BaseSettings):
     BOT_TOKEN: str = "your_bot_token"
     WEBHOOK_URL: Optional[str] = None
 
-    # AI (llmost.ru — OpenAI-compatible proxy)
-    LLMOST_API_KEY: str = "your_llmost_api_key"
-    LLMOST_BASE_URL: str = "https://llmost.ru/api/v1"
-    LLMOST_MODEL: str = "openai/gpt-4o"
-    # Модель, принимающая голос как input_audio в /chat/completions.
-    LLMOST_AUDIO_MODEL: str = "openai/gpt-4o-audio-preview"
+    # AI — Sber GigaChat (https://developers.sber.ru/portal/products/gigachat-api)
+    # GIGACHAT_AUTH_KEY — это «Authorization Key» из личного кабинета (base64 от
+    # client_id:client_secret). По нему раз в ~30 мин запрашивается access_token.
+    GIGACHAT_AUTH_KEY: str = ""
+    # Scope: GIGACHAT_API_PERS (физлицо) | GIGACHAT_API_B2B | GIGACHAT_API_CORP
+    GIGACHAT_SCOPE: str = "GIGACHAT_API_PERS"
+    GIGACHAT_MODEL: str = "GigaChat-2-Max"
+    # Сертификаты Сбера выпущены НУЦ Минцифры и обычно отсутствуют в системном
+    # хранилище → по умолчанию TLS-проверка выключена. Установив корневой
+    # сертификат Минцифры, можно включить (GIGACHAT_VERIFY_SSL=true).
+    GIGACHAT_VERIFY_SSL: bool = False
 
     # Bootstrap владельцев. TELEGRAM_ID — список ID через запятую (можно один).
     # На каждый ID создаётся отдельная Staff-row с role=owner; первый получает

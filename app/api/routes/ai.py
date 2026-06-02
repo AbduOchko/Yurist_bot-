@@ -1,8 +1,8 @@
+import base64
 import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.config import settings
 from app.db import crud
 from app.db.models import MessageType, SenderType
 from app.db.session import get_session
+from app.services import gigachat
 from app.services.subscription import verify_subscription
 
 logger = logging.getLogger(__name__)
@@ -28,24 +29,23 @@ SYSTEM_PROMPT = """Вы — опытный юрист-консультант с 
 - Сохраняйте профессиональный, но доступный тон
 - Структурируйте ответы с использованием нумерованных списков и абзацев
 - При необходимости ссылайтесь на конкретные статьи законов РФ
-- Если пользователь прислал изображение документа — внимательно изучите его и дайте юридический анализ
-- Если пользователь прислал голосовое сообщение — отвечайте на его суть"""
+- Если пользователь прислал изображение документа — внимательно изучите его и дайте юридический анализ"""
 
 
-def get_client() -> AsyncOpenAI:
-    return AsyncOpenAI(
-        api_key=settings.LLMOST_API_KEY,
-        base_url=settings.LLMOST_BASE_URL,
-    )
+def _api_configured() -> bool:
+    key = (settings.GIGACHAT_AUTH_KEY or "").strip()
+    return bool(key) and key != "your_authorization_key_here"
 
 
 def build_messages(history: list, current: Optional[dict] = None) -> list:
-    """Build OpenAI messages array from chat history.
-    history items use simple text; `current` may be a rich multimodal message."""
+    """Build the GigaChat messages array from chat history.
+
+    History items use simple text; `current` may be a richer message (e.g. an
+    image attachment) that replaces the last user turn.
+    """
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in history[-20:]:
         if m.sender_type == SenderType.user:
-            # Skip the very last user msg if we'll replace it with `current`
             text = m.content or ""
             if m.message_type == MessageType.voice:
                 text = m.content or "[голосовое сообщение]"
@@ -56,7 +56,6 @@ def build_messages(history: list, current: Optional[dict] = None) -> list:
             msgs.append({"role": "assistant", "content": m.content or ""})
 
     if current:
-        # Replace last user message with the rich multimodal version
         if msgs and msgs[-1]["role"] == "user":
             msgs[-1] = current
         else:
@@ -68,30 +67,54 @@ async def _send_error(chat_id: int, text: str):
     await manager.broadcast_to_chat(chat_id, {"type": "ai_error", "content": text})
 
 
+async def _broadcast_done(chat_id: int, ai_msg, content: str):
+    await manager.broadcast_to_chat(
+        chat_id,
+        {
+            "type": "ai_done",
+            "id": ai_msg.id,
+            "chat_id": chat_id,
+            "sender_type": "ai",
+            "sender_name": "ИИ-Советник",
+            "content": content,
+            "message_type": "text",
+            "created_at": ai_msg.created_at.isoformat(),
+        },
+    )
+
+
+async def _ai_say(session, chat_id: int, text: str):
+    """Emit a canned assistant reply (single chunk + done) and persist it.
+
+    Goes through the same ai_chunk/ai_done path the streaming flow uses, so the
+    frontend removes its typing indicator and renders the bubble normally.
+    """
+    await manager.broadcast_to_chat(chat_id, {"type": "ai_chunk", "content": text})
+    ai_msg = await crud.create_message(
+        session,
+        chat_id=chat_id,
+        sender_type=SenderType.ai,
+        content=text,
+        sender_name="ИИ-Советник",
+    )
+    await _broadcast_done(chat_id, ai_msg, text)
+    return ai_msg
+
+
 async def _stream_and_save(
     session,
     chat_id: int,
     messages: list,
     model: Optional[str] = None,
 ):
-    """Stream AI completion via WebSocket and save final message."""
-    client = get_client()
+    """Stream a GigaChat completion over WebSocket and save the final message."""
     full_response = ""
     try:
-        stream = await client.chat.completions.create(
-            model=model or settings.LLMOST_MODEL,
-            messages=messages,
-            max_tokens=2048,
-            stream=True,
-            timeout=90,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                full_response += delta
-                await manager.broadcast_to_chat(chat_id, {"type": "ai_chunk", "content": delta})
+        async for delta in gigachat.stream_chat(messages, model=model):
+            full_response += delta
+            await manager.broadcast_to_chat(chat_id, {"type": "ai_chunk", "content": delta})
     except Exception as e:
-        logger.error(f"AI streaming error: {type(e).__name__}: {e}")
+        logger.error(f"GigaChat streaming error: {type(e).__name__}: {e}")
         await _send_error(chat_id, "ИИ-советник временно недоступен. Попробуйте позже.")
         return None
 
@@ -106,19 +129,7 @@ async def _stream_and_save(
         content=full_response,
         sender_name="ИИ-Советник",
     )
-    await manager.broadcast_to_chat(
-        chat_id,
-        {
-            "type": "ai_done",
-            "id": ai_msg.id,
-            "chat_id": chat_id,
-            "sender_type": "ai",
-            "sender_name": "ИИ-Советник",
-            "content": full_response,
-            "message_type": "text",
-            "created_at": ai_msg.created_at.isoformat(),
-        },
-    )
+    await _broadcast_done(chat_id, ai_msg, full_response)
     return ai_msg
 
 
@@ -137,8 +148,8 @@ async def ai_chat(
     session: AsyncSession = Depends(get_session),
     _sub=Depends(verify_subscription),
 ):
-    if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
-        await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
+    if not _api_configured():
+        await _send_error(data.chat_id, "ИИ (GigaChat) не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}
 
     user_msg = await crud.create_message(
@@ -182,7 +193,21 @@ class AIMediaIn(BaseModel):
     file_size: Optional[int] = None
     caption: Optional[str] = None
     duration: Optional[int] = None       # voice duration in seconds
-    ai_audio_url: Optional[str] = None   # WAV-версия для gpt-4o-audio-preview
+    ai_audio_url: Optional[str] = None   # принимается от старого фронта, GigaChat не использует
+
+
+def _decode_data_url(data_url: str) -> tuple[Optional[bytes], str]:
+    """data:<mime>;base64,<payload> → (bytes, mime). Returns (None, "") on failure."""
+    if not data_url or "," not in data_url:
+        return None, ""
+    meta, b64 = data_url.split(",", 1)
+    mime = "image/jpeg"
+    if meta.startswith("data:") and ";" in meta:
+        mime = meta[5:meta.index(";")] or "image/jpeg"
+    try:
+        return base64.b64decode(b64), mime
+    except Exception:
+        return None, ""
 
 
 @router.post("/media")
@@ -191,8 +216,8 @@ async def ai_media(
     session: AsyncSession = Depends(get_session),
     _sub=Depends(verify_subscription),
 ):
-    if not settings.LLMOST_API_KEY or settings.LLMOST_API_KEY == "your_llmost_api_key_here":
-        await _send_error(data.chat_id, "API ключ не настроен. Обратитесь к администратору.")
+    if not _api_configured():
+        await _send_error(data.chat_id, "ИИ (GigaChat) не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}
 
     mtype = MessageType.image if data.message_type == "image" else MessageType.voice
@@ -228,55 +253,46 @@ async def ai_media(
         },
     )
 
+    # ── 2a. Voice: GigaChat не принимает аудио напрямую ──
+    if mtype == MessageType.voice:
+        await _ai_say(
+            session,
+            data.chat_id,
+            "🎤 Голосовые сообщения пока не поддерживаются ИИ-советником на базе GigaChat. "
+            "Пожалуйста, напишите ваш вопрос текстом — и я подробно отвечу.",
+        )
+        return {"ok": True, "voice_unsupported": True}
+
+    # ── 2b. Image: upload to GigaChat, reference it via attachments ──
+    img_bytes, mime = _decode_data_url(data.file_url)
+    if not img_bytes:
+        await _send_error(data.chat_id, "Не удалось обработать изображение. Попробуйте другое фото.")
+        return {"ok": False, "error": "bad_image"}
+
+    try:
+        file_id = await gigachat.upload_file(
+            img_bytes,
+            filename=data.file_name or "image.jpg",
+            mime=mime or "image/jpeg",
+        )
+    except Exception as e:
+        logger.error(f"GigaChat file upload failed: {type(e).__name__}: {e}")
+        await _send_error(data.chat_id, "Не удалось загрузить изображение в ИИ. Попробуйте позже.")
+        return {"ok": False, "error": "upload_failed"}
+
+    prompt_text = data.caption or (
+        "Изучите это изображение как юрист и дайте подробный анализ. "
+        "Если это документ — разберите его содержание и правовые нюансы."
+    )
+
     history = await crud.get_messages(session, data.chat_id, limit=30)
-    use_audio_model = False
-
-    # ── 2. Build the multimodal "current" message for the AI ──
-    if mtype == MessageType.image:
-        prompt_text = data.caption or (
-            "Изучите это изображение как юрист и дайте подробный анализ. "
-            "Если это документ — разберите его содержание и правовые нюансы."
-        )
-        current = {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt_text},
-                {"type": "image_url", "image_url": {"url": data.file_url}},
-            ],
-        }
-        # History's last item is this image msg (content=None) — drop it, use `current`
-        history = [m for m in history if m.id != user_msg.id]
-    else:  # voice → input_audio для gpt-4o-audio-preview
-        if not data.ai_audio_url or "," not in data.ai_audio_url:
-            await _send_error(
-                data.chat_id,
-                "Не удалось обработать голос. Попробуйте отправить текстом."
-            )
-            return {"ok": False, "error": "no_ai_audio"}
-
-        _, audio_b64 = data.ai_audio_url.split(",", 1)
-        logger.info(
-            f"ai_media voice: audio_b64_len={len(audio_b64)}, model={settings.LLMOST_AUDIO_MODEL}"
-        )
-        current = {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Это голосовое сообщение пользователя. Ответьте на его суть как юрист.",
-                },
-                {
-                    "type": "input_audio",
-                    "input_audio": {"data": audio_b64, "format": "wav"},
-                },
-            ],
-        }
-        # History's last item is this voice msg (content=duration) — drop it
-        history = [m for m in history if m.id != user_msg.id]
-        use_audio_model = True
-
+    history = [m for m in history if m.id != user_msg.id]  # drop the just-saved image msg
+    current = {
+        "role": "user",
+        "content": prompt_text,
+        "attachments": [file_id],
+    }
     messages = build_messages(history, current=current)
-    model_id = settings.LLMOST_AUDIO_MODEL if use_audio_model else None
 
-    ai_msg = await _stream_and_save(session, data.chat_id, messages, model=model_id)
+    ai_msg = await _stream_and_save(session, data.chat_id, messages)
     return {"ok": bool(ai_msg)}
