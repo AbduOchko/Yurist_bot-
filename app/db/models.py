@@ -122,9 +122,9 @@ class Staff(Base):
     login = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
-    # telegram_id не UNIQUE: один человек может быть и owner, и lawyer одновременно.
-    # Уникальность в пределах роли обеспечивается partial unique index ux_staff_tg_role
-    # (создаётся в session.py create_tables).
+    # telegram_id не уникален вообще: один telegram_id можно привязать к любому
+    # числу staff-строк (разные роли или даже несколько строк с одной ролью).
+    # Никаких unique-индексов на него нет — см. session.py create_tables.
     telegram_id = Column(BigInteger, nullable=True, index=True)
     specialization = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)

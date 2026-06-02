@@ -61,16 +61,14 @@ async def create_tables():
             "CREATE INDEX IF NOT EXISTS ix_chats_lawyer_staff_id ON chats (lawyer_staff_id);"
         ))
 
-        # ── Staff telegram_id: drop single-column UNIQUE (legacy) and replace
-        # with (telegram_id, role) partial unique. Allows one person to have
-        # multiple roles (e.g. owner who also acts as a lawyer for assignment).
+        # ── Staff telegram_id: no uniqueness at all. One telegram_id may map to
+        # any number of staff rows (multiple roles, or even several rows with the
+        # same role). Drop the legacy single-column UNIQUE and the later
+        # (telegram_id, role) partial unique; keep only a plain lookup index.
         await conn.execute(text("DROP INDEX IF EXISTS ix_staff_telegram_id;"))
+        await conn.execute(text("DROP INDEX IF EXISTS ux_staff_tg_role;"))
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_staff_telegram_id ON staff (telegram_id);"
-        ))
-        await conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_staff_tg_role "
-            "ON staff (telegram_id, role) WHERE telegram_id IS NOT NULL;"
         ))
 
         # ── Orphaned-broadcast cleanup: anything still 'sending' after
@@ -142,9 +140,9 @@ async def bootstrap_owner():
                 select(Staff).where(
                     Staff.telegram_id == telegram_id,
                     Staff.role == StaffRole.owner,
-                )
+                ).limit(1)
             )
-            if ex.scalar_one_or_none():
+            if ex.scalars().first():
                 continue  # already exists, skip
 
             # Pick a login: clean OWNER_BOOTSTRAP_LOGIN if free, otherwise suffix with telegram_id

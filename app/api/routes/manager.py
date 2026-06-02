@@ -192,20 +192,11 @@ async def create_lawyer(
     if len(data.password) < 8:
         raise HTTPException(status_code=400, detail="Пароль минимум 8 символов")
 
-    # uniqueness checks
+    # Логин обязан быть уникальным; telegram_id намеренно НЕ проверяется —
+    # один Telegram ID можно привязать к любому числу юристов.
     existing = await session.execute(select(Staff).where(Staff.login == data.login.strip()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Логин уже занят")
-
-    if data.telegram_id:
-        existing_tg = await session.execute(
-            select(Staff).where(
-                Staff.telegram_id == data.telegram_id,
-                Staff.role == StaffRole.lawyer,
-            )
-        )
-        if existing_tg.scalar_one_or_none():
-            raise HTTPException(status_code=409, detail="У этого Telegram ID уже есть роль юриста")
 
     lawyer = Staff(
         role=StaffRole.lawyer,

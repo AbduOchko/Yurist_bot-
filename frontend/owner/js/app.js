@@ -160,28 +160,43 @@ async function loadStaff() {
       const r = document.createElement('div');
       r.className = 'data-row';
       if (!s.is_active) r.style.opacity = '0.5';
+      const isSelf = s.id === ME.id;
+      let actionsHtml = `<button class="btn-secondary" data-act="reset" data-id="${s.id}" data-name="${escapeHtml(s.full_name)}">Сменить пароль</button>`;
+      if (!isSelf) {
+        if (s.is_active) {
+          actionsHtml += `<button class="btn-danger" data-act="disable" data-id="${s.id}">Отключить</button>`;
+        } else {
+          actionsHtml += `<button class="btn-secondary" data-act="enable" data-id="${s.id}">Включить</button>`;
+          actionsHtml += `<button class="btn-danger" data-act="del" data-id="${s.id}" data-name="${escapeHtml(s.full_name)}">Удалить</button>`;
+        }
+      }
       r.innerHTML = `
         <div class="grow">
           <div class="data-name">${escapeHtml(s.full_name)} · ${roleLabel[s.role] || s.role}</div>
           <div class="data-sub">@${escapeHtml(s.login)} · ${escapeHtml(s.specialization || '')} · TG ${s.telegram_id || '—'} · ${s.is_online ? '🟢' : '⚫'}${!s.is_active ? ' · ❌ отключён' : ''}</div>
         </div>
-        <div class="data-actions">
-          <button class="btn-secondary" data-act="reset" data-id="${s.id}" data-name="${escapeHtml(s.full_name)}">Сменить пароль</button>
-          ${s.id !== ME.id ? `<button class="btn-danger" data-act="del" data-id="${s.id}">Отключить</button>` : ''}
-        </div>
+        <div class="data-actions">${actionsHtml}</div>
       `;
       r.querySelectorAll('button').forEach(btn => {
         btn.addEventListener('click', async () => {
           const id = parseInt(btn.dataset.id);
-          if (btn.dataset.act === 'reset') {
+          const act = btn.dataset.act;
+          if (act === 'reset') {
             RESET_STAFF_ID = id;
             $('resetPwdSub').textContent = `Сотрудник: ${btn.dataset.name}`;
             $('resetPwdNew').value = '';
             $('resetPwdError').textContent = '';
             $('resetPwdModal').classList.remove('hidden');
-          } else if (btn.dataset.act === 'del') {
-            if (!confirm('Отключить сотрудника? (вернуть можно только через смену is_active в БД)')) return;
-            try { await api('DELETE', `/api/owner/staff/${id}`); loadStaff(); showToast('Отключён'); }
+          } else if (act === 'disable') {
+            if (!confirm('Отключить сотрудника? Он потеряет доступ к панели, но останется в списке — позже можно включить обратно или удалить.')) return;
+            try { await api('PATCH', `/api/owner/staff/${id}`, { is_active: false }); loadStaff(); showToast('Сотрудник отключён'); }
+            catch (e) { showToast(e.message); }
+          } else if (act === 'enable') {
+            try { await api('PATCH', `/api/owner/staff/${id}`, { is_active: true }); loadStaff(); showToast('Сотрудник включён'); }
+            catch (e) { showToast(e.message); }
+          } else if (act === 'del') {
+            if (!confirm(`Удалить сотрудника "${btn.dataset.name}" навсегда? Действие необратимо, его чаты вернутся в общий пул.`)) return;
+            try { await api('DELETE', `/api/owner/staff/${id}`); loadStaff(); showToast('Сотрудник удалён'); }
             catch (e) { showToast(e.message); }
           }
         });

@@ -29,15 +29,17 @@ NO_ACCESS_MSG = (
 
 
 async def _find_staff(telegram_id: int, role: StaffRole) -> Staff | None:
+    # telegram_id больше не уникален — на один ID может приходиться несколько
+    # активных записей с одной ролью, поэтому берём первую попавшуюся.
     async with async_session_maker() as session:
         result = await session.execute(
             select(Staff).where(
                 Staff.telegram_id == telegram_id,
                 Staff.role == role,
                 Staff.is_active == True,  # noqa: E712
-            )
+            ).limit(1)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
 
 def _panel_button(role: str, title: str) -> InlineKeyboardMarkup:

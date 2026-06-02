@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import delete as sql_delete, func, select
+from sqlalchemy import delete as sql_delete, func, select, update as sql_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 def _friendly_conflict(e: IntegrityError) -> str:
     """Map common Postgres UNIQUE-violation messages to readable Russian."""
     msg = str(getattr(e, "orig", "") or e).lower()
-    if "ux_staff_tg_role" in msg:
-        return "У этого Telegram ID уже есть такая роль"
     if "ix_staff_login" in msg or ("login" in msg and "unique" in msg):
         return "Логин уже занят"
     if "required_channels" in msg and "channel_id" in msg:
@@ -160,18 +158,8 @@ async def create_staff(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Логин уже занят")
 
-    if data.telegram_id:
-        existing_tg = await session.execute(
-            select(Staff).where(
-                Staff.telegram_id == data.telegram_id,
-                Staff.role == role,
-            )
-        )
-        if existing_tg.scalar_one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail=f"У этого Telegram ID уже есть роль «{role.value}»",
-            )
+    # telegram_id намеренно НЕ проверяется на уникальность — один и тот же
+    # Telegram ID можно привязать к любому числу сотрудников и ролей.
 
     s = Staff(
         role=role,
@@ -254,14 +242,29 @@ async def delete_staff(
     staff: Staff = OwnerDep,
     session: AsyncSession = Depends(get_session),
 ):
+    """Hard-delete a staff member (removes the row entirely).
+
+    Their lawyer-chats return to the free pool and broadcast authorship is
+    cleared. Both FKs are ON DELETE SET NULL, but we null them explicitly so
+    the delete works regardless of the DB-level FK config.
+
+    To temporarily revoke access without losing the row, use
+    PATCH /staff/{id} with {"is_active": false} instead.
+    """
     if staff_id == staff.id:
         raise HTTPException(status_code=400, detail="Нельзя удалить себя")
     result = await session.execute(select(Staff).where(Staff.id == staff_id))
     target = result.scalar_one_or_none()
     if not target:
         raise HTTPException(status_code=404, detail="Не найден")
-    target.is_active = False
-    target.session_token = None
+
+    await session.execute(
+        sql_update(Chat).where(Chat.lawyer_staff_id == staff_id).values(lawyer_staff_id=None)
+    )
+    await session.execute(
+        sql_update(Broadcast).where(Broadcast.sender_staff_id == staff_id).values(sender_staff_id=None)
+    )
+    await session.delete(target)
     await session.commit()
     return {"ok": True}
 
