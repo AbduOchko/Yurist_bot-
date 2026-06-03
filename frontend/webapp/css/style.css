@@ -1504,6 +1504,10 @@ body {
 
 .auth-screen.hidden { display: none; }
 
+/* Уже вошедшему пользователю экран входа не показываем даже на миг
+   (класс ставится inline-скриптом в <head> до первой отрисовки). */
+html.pre-authed .auth-screen { display: none !important; }
+
 .auth-sheet {
   width: 100%;
   max-height: 96dvh;

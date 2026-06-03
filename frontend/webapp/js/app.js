@@ -28,6 +28,8 @@ const TG_ID   = TG_USER?.id || 100000001;
 
 const AUTH_TOKEN_KEY = 'yurist_auth_token';
 const AUTH_LOGIN_KEY = 'yurist_auth_login';
+const AUTH_TS_KEY    = 'yurist_auth_ts';     // когда пользователь последний раз заходил
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;     // авто-выход при неактивности > недели
 
 // ── DOM refs ──────────────────────────────
 const $authScreen    = document.getElementById('authScreen');
@@ -212,6 +214,8 @@ document.getElementById('regPasswordConfirm').addEventListener('keydown', e => {
 function onAuthSuccess(token, login, photoUrl) {
   localStorage.setItem(AUTH_TOKEN_KEY, token);
   localStorage.setItem(AUTH_LOGIN_KEY, login);
+  localStorage.setItem(AUTH_TS_KEY, String(Date.now()));
+  document.documentElement.classList.add('pre-authed');
   $authScreen.classList.add('hidden');
   loadProfile(login, photoUrl);
   loadGroups();
@@ -221,6 +225,8 @@ function onAuthSuccess(token, login, photoUrl) {
 function logout() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_LOGIN_KEY);
+  localStorage.removeItem(AUTH_TS_KEY);
+  document.documentElement.classList.remove('pre-authed');
   location.reload();
 }
 
@@ -324,39 +330,66 @@ function fallbackAvatar(label) {
 }
 
 // ── Check auth on load ────────────────────
+function clearAuthLocal() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_LOGIN_KEY);
+  localStorage.removeItem(AUTH_TS_KEY);
+  document.documentElement.classList.remove('pre-authed');
+}
+
+function showAuthScreen() {
+  document.documentElement.classList.remove('pre-authed');
+  $authScreen.classList.remove('hidden');
+}
+
 async function checkAuth() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const login = localStorage.getItem(AUTH_LOGIN_KEY);
+  const ts = parseInt(localStorage.getItem(AUTH_TS_KEY) || '0', 10);
+  const stale = !!token && ts > 0 && (Date.now() - ts > WEEK_MS);
 
-  if (!token) {
+  if (token && !stale) {
+    // Пользователь уже входил → экран регистрации не показываем даже на миг.
+    // (pre-authed уже выставлен inline-скриптом в <head>, но подстрахуемся.)
+    document.documentElement.classList.add('pre-authed');
+    $authScreen.classList.add('hidden');
+    loadProfile(login, null);
+    loadGroups();
+    localStorage.setItem(AUTH_TS_KEY, String(Date.now()));
+
+    // Тихая фоновая проверка сессии — не мигаем экраном входа.
     try {
-      const res = await fetch('/api/auth/check', {
+      const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ telegram_id: TG_ID }),
+        body: JSON.stringify({ token }),
       });
-      const data = await res.json();
-      if (!data.has_account) switchToRegister();
-    } catch {}
+      if (res.ok) {
+        let v = {};
+        try { v = await res.json(); } catch {}
+        loadProfile(login, v.photo_url);
+      } else {
+        // Сессия действительно недействительна — только теперь показываем вход.
+        clearAuthLocal();
+        showAuthScreen();
+      }
+    } catch {
+      // Нет сети — оставляем пользователя внутри, ничего не мигает.
+    }
     return;
   }
 
+  // Не вошёл (или не заходил больше недели) → показываем вход.
+  if (stale) clearAuthLocal();
+  showAuthScreen();
   try {
-    const res = await fetch('/api/auth/verify', {
+    const res = await fetch('/api/auth/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ telegram_id: TG_ID }),
     });
-    if (res.ok) {
-      let verifyData = {};
-      try { verifyData = await res.json(); } catch {}
-      $authScreen.classList.add('hidden');
-      loadProfile(login, verifyData.photo_url);
-      loadGroups();
-    } else {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-      localStorage.removeItem(AUTH_LOGIN_KEY);
-    }
+    const data = await res.json();
+    if (!data.has_account) switchToRegister();
   } catch {}
 }
 
