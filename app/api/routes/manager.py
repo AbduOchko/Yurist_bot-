@@ -329,3 +329,73 @@ async def assign_lawyer(
     await manager.broadcast_to_owners({"type": "chat_assigned", "chat_id": chat.id, "lawyer_id": lawyer.id})
 
     return {"ok": True, "chat_id": chat.id, "lawyer_id": lawyer.id}
+
+
+# ── Unified inbox: every user + their manager-channel (match) chat ─────
+@router.get("/users")
+async def list_users_inbox(
+    staff: Staff = ManagerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    """All bot users with a summary of their manager↔user (match) chat.
+
+    The manager can write to anyone — even users who only ever used the AI.
+    Opening a user without an existing chat lazily creates one (see /chats/open).
+    """
+    users = await crud.get_all_users(session)
+    chats = (
+        await session.execute(
+            select(Chat)
+            .options(selectinload(Chat.messages))
+            .where(Chat.chat_type == ChatType.match)
+        )
+    ).scalars().all()
+    by_user = {c.user_id: c for c in chats}
+
+    out = []
+    for u in users:
+        c = by_user.get(u.id)
+        last, count, chat_id, updated = None, 0, None, None
+        if c:
+            non_deleted = [m for m in c.messages if not m.is_deleted]
+            count = len(non_deleted)
+            chat_id = c.id
+            updated = c.updated_at.isoformat() if c.updated_at else None
+            if non_deleted:
+                lm = non_deleted[-1]
+                last = {
+                    "content": lm.content,
+                    "sender_type": lm.sender_type.value if lm.sender_type else None,
+                    "created_at": lm.created_at.isoformat() if lm.created_at else None,
+                }
+        out.append({
+            "user_id": u.id,
+            "telegram_id": u.telegram_id,
+            "first_name": u.first_name,
+            "last_name": u.last_name,
+            "username": u.username,
+            "photo_url": u.photo_url,
+            "chat_id": chat_id,
+            "message_count": count,
+            "last_message": last,
+            "updated_at": updated,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        })
+
+    out.sort(key=lambda r: (r["updated_at"] or r["created_at"] or ""), reverse=True)
+    return out
+
+
+class OpenChatIn(BaseModel):
+    user_id: int
+
+
+@router.post("/chats/open")
+async def open_user_chat(
+    data: OpenChatIn,
+    staff: Staff = ManagerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get-or-create the manager↔user (match) chat for a user, return its id."""
+    chat = await crud.get_or_create_chat(session, user_id=data.user_id, chat_type=ChatType.match)
+    return {"chat_id": chat.id}

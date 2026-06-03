@@ -1,27 +1,82 @@
-/* Manager panel — match-chats triage + lawyers CRUD + lawyer-chats view */
+/* ─────────────────────────────────────────────────────────────
+   Manager panel — mobile-first, lawyer-style polish.
+   Чаты: единый инбокс всех пользователей (общение 1-на-1).
+   Юристы: база юристов по категориям (специализациям).
+   ───────────────────────────────────────────────────────────── */
 
 const TOKEN_KEY = 'yurist_manager_token';
 let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
 let ME = null;
-let MATCH_CHATS = [], LAWYER_CHATS = [], LAWYERS = [];
-let CURRENT_MATCH_ID = null;
-let CURRENT_LAWYER_CHAT_ID = null;
-let WS = null;
+let USERS = [];
+let LAWYERS = [];
+let CURRENT_CHAT_ID = null;
+let CURRENT_USER = null;
 let ASSIGN_USER_ID = null;
+let WS = null;
 
+// `tg` уже объявлен глобально в inline-скрипте <head>.
 const $ = (id) => document.getElementById(id);
 
-function showToast(msg) {
-  const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => t.classList.remove('show'), 2500);
+const AVATAR_GRADIENTS = [
+  'linear-gradient(135deg,#6366f1,#4338ca)', 'linear-gradient(135deg,#ec4899,#be185d)',
+  'linear-gradient(135deg,#06b6d4,#0e7490)', 'linear-gradient(135deg,#8b5cf6,#6d28d9)',
+  'linear-gradient(135deg,#14b8a6,#0f766e)', 'linear-gradient(135deg,#f59e0b,#b45309)',
+  'linear-gradient(135deg,#ef4444,#b91c1c)', 'linear-gradient(135deg,#84cc16,#4d7c0f)',
+];
+
+// ── Utils ─────────────────────────────────────
+function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function initials(name) {
+  const p = String(name || '').trim().split(/\s+/);
+  return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || '?';
 }
-function escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function fmtTime(iso) {
+function avatarColorFromName(name) {
+  const s = String(name || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 8;
+}
+function smartTime(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+  const d = new Date(iso), now = new Date();
+  const sec = Math.floor((now - d) / 1000);
+  if (sec < 60) return 'только что';
+  if (sec < 3600) return `${Math.floor(sec / 60)} мин назад`;
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return 'вчера';
+  const dayDiff = Math.floor((now.setHours(0,0,0,0) - new Date(d).setHours(0,0,0,0)) / 86400000);
+  if (dayDiff < 7) return d.toLocaleDateString('ru-RU', { weekday: 'short' });
+  if (d.getFullYear() === new Date().getFullYear()) return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' });
+}
+function fmtMsgTime(iso) { return iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : ''; }
+function formatDateSeparator(iso) {
+  const d = new Date(iso), now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'Сегодня';
+  const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return 'Вчера';
+  const dayDiff = Math.floor((now.setHours(0,0,0,0) - new Date(d).setHours(0,0,0,0)) / 86400000);
+  if (dayDiff < 7) return d.toLocaleDateString('ru-RU', { weekday: 'long' });
+  if (d.getFullYear() === new Date().getFullYear()) return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+function pluralRu(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+function haptic(type) {
+  const hf = tg?.HapticFeedback; if (!hf) return;
+  try {
+    if (['light','medium','heavy','rigid','soft'].includes(type)) hf.impactOccurred?.(type === 'soft' ? 'light' : type);
+    else if (['success','error','warning'].includes(type)) hf.notificationOccurred?.(type);
+    else if (type === 'select') hf.selectionChanged?.();
+  } catch {}
 }
 
+// ── HTTP ──────────────────────────────────────
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (TOKEN) opts.headers['Authorization'] = `Bearer ${TOKEN}`;
@@ -29,8 +84,19 @@ async function api(method, path, body) {
   const res = await fetch(path, opts);
   if (res.status === 401) { logout(); throw new Error('Не авторизован'); }
   let data = {}; try { data = await res.json(); } catch {}
-  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `HTTP ${res.status}`);
   return data;
+}
+
+// ── Toast ─────────────────────────────────────
+function showToast(msg, duration = 2500) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.remove('exit'); t.classList.add('show');
+  clearTimeout(showToast._t); clearTimeout(showToast._exit);
+  showToast._t = setTimeout(() => {
+    t.classList.add('exit');
+    showToast._exit = setTimeout(() => t.classList.remove('show', 'exit'), 220);
+  }, duration);
 }
 
 // ── Auth ──────────────────────────────────────
@@ -42,13 +108,11 @@ async function tryLogin() {
   try {
     const data = await api('POST', '/api/staff/login', { login, password });
     if (data.role !== 'manager' && data.role !== 'owner') {
-      $('loginError').textContent = 'Этот логин не для панели менеджера'; return;
+      $('loginError').textContent = 'Этот логин не для панели менеджера'; haptic('error'); return;
     }
-    TOKEN = data.token;
-    localStorage.setItem(TOKEN_KEY, TOKEN);
-    ME = data;
-    enterApp();
-  } catch (e) { $('loginError').textContent = e.message; }
+    TOKEN = data.token; localStorage.setItem(TOKEN_KEY, TOKEN); ME = data;
+    haptic('success'); enterApp();
+  } catch (e) { $('loginError').textContent = e.message; haptic('error'); }
 }
 
 async function checkAuth() {
@@ -56,8 +120,7 @@ async function checkAuth() {
   try {
     const data = await api('POST', '/api/staff/verify', {});
     if (data.role !== 'manager' && data.role !== 'owner') { logout(); return; }
-    ME = data;
-    enterApp();
+    ME = data; enterApp();
   } catch { showLogin(); }
 }
 
@@ -65,16 +128,16 @@ function showLogin() {
   $('loginPage').classList.remove('hidden');
   $('appShell').classList.add('hidden');
   if (WS) { WS.close(); WS = null; }
+  setTgBackButton(false);
 }
-
 function logout() {
-  localStorage.removeItem(TOKEN_KEY);
-  TOKEN = ''; ME = null;
+  localStorage.removeItem(TOKEN_KEY); TOKEN = ''; ME = null;
   showLogin();
 }
 
 $('loginBtn').addEventListener('click', tryLogin);
 $('passwordInput').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
+$('loginInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('passwordInput').focus(); });
 $('logoutBtn').addEventListener('click', async () => {
   try { await api('POST', '/api/staff/logout', {}); } catch {}
   logout();
@@ -83,238 +146,348 @@ $('logoutBtn').addEventListener('click', async () => {
 function enterApp() {
   $('loginPage').classList.add('hidden');
   $('appShell').classList.remove('hidden');
-  $('meSubtitle').textContent = `${ME.full_name} · ${ME.role === 'owner' ? 'Владелец (менеджер-вид)' : 'Менеджер'}`;
-  loadMatchChats();
+  $('meName').textContent = ME.full_name || 'Менеджер';
+  $('meRole').textContent = ME.role === 'owner' ? 'Владелец · режим менеджера' : 'Менеджер';
+  loadUsers();
   loadLawyers();
-  loadLawyerChats();
   connectWS();
 }
 
-// ── Tabs ──────────────────────────────────────
-document.querySelectorAll('.app-tab').forEach(btn => {
+// ── Segmented control (Чаты / Юристы) ─────────
+document.querySelectorAll('.mgr-seg-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.app-tab').forEach(b => b.classList.remove('active'));
+    haptic('select');
+    document.querySelectorAll('.mgr-seg-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('.app-panel').forEach(p => p.classList.remove('active'));
-    $('tab-' + btn.dataset.tab).classList.add('active');
+    const v = btn.dataset.view;
+    $('view-chats').classList.toggle('active', v === 'chats');
+    $('view-lawyers').classList.toggle('active', v === 'lawyers');
+    if (v === 'lawyers') loadLawyers(); else loadUsers();
   });
 });
 
-// ── Match chats ───────────────────────────────
-async function loadMatchChats() {
-  try { MATCH_CHATS = await api('GET', '/api/manager/match-chats'); renderMatchList(); }
-  catch (e) { showToast(e.message); }
-}
-
-function renderMatchList() {
-  const wrap = $('matchList');
-  if (!MATCH_CHATS.length) {
-    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Нет чатов подбора.</div>`;
-    return;
-  }
-  wrap.innerHTML = '';
-  for (const chat of MATCH_CHATS) {
-    const item = document.createElement('div');
-    item.className = 'chat-list-item';
-    if (chat.id === CURRENT_MATCH_ID) item.classList.add('active');
-    const u = chat.user || {};
-    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
-    const preview = chat.last_message?.content || 'Нет сообщений';
-    item.innerHTML = `
-      <div class="chat-item-name">${escapeHtml(name)}</div>
-      <div class="chat-item-preview">${escapeHtml(preview)}</div>
-      <div class="chat-item-meta">${chat.message_count} сообщ. · ${fmtTime(chat.updated_at)}</div>`;
-    item.addEventListener('click', () => openMatchChat(chat));
-    wrap.appendChild(item);
-  }
-}
-
-async function openMatchChat(chat) {
-  CURRENT_MATCH_ID = chat.id;
-  renderMatchList();
-  await openChatPane(chat, 'matchDetail', '/api/manager');
-}
-
-// ── Lawyer chats (manager view) ───────────────
-async function loadLawyerChats() {
-  try { LAWYER_CHATS = await api('GET', '/api/manager/lawyer-chats'); renderLawyerChatList(); }
-  catch (e) { showToast(e.message); }
-}
-
-function renderLawyerChatList() {
-  const wrap = $('lawyerChatList');
-  if (!LAWYER_CHATS.length) {
-    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Нет чатов с юристами.</div>`;
-    return;
-  }
-  wrap.innerHTML = '';
-  for (const chat of LAWYER_CHATS) {
-    const item = document.createElement('div');
-    item.className = 'chat-list-item';
-    if (chat.id === CURRENT_LAWYER_CHAT_ID) item.classList.add('active');
-    const u = chat.user || {};
-    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
-    const assigned = chat.lawyer_staff_id ? `Назначен #${chat.lawyer_staff_id}` : '⚠ Не назначен';
-    item.innerHTML = `
-      <div class="chat-item-name">${escapeHtml(name)}</div>
-      <div class="chat-item-preview">${escapeHtml(chat.last_message?.content || 'Нет сообщений')}</div>
-      <div class="chat-item-meta">${assigned} · ${fmtTime(chat.updated_at)}</div>`;
-    item.addEventListener('click', () => openLawyerChat(chat));
-    wrap.appendChild(item);
-  }
-}
-
-async function openLawyerChat(chat) {
-  CURRENT_LAWYER_CHAT_ID = chat.id;
-  renderLawyerChatList();
-  await openChatPane(chat, 'lawyerChatDetail', '/api/manager', false);
-}
-
-// ── Shared chat pane open ─────────────────────
-async function openChatPane(chat, paneId, apiBase, canAssign = true) {
-  const u = chat.user || {};
-  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
-  const detail = $(paneId);
-  const assignBtn = canAssign && chat.chat_type === 'match'
-    ? `<button class="btn-primary" style="width:auto;padding:8px 14px;margin-left:auto" id="assignBtn-${chat.id}">Назначить юриста</button>`
-    : '';
-  detail.innerHTML = `
-    <div class="chat-header-bar" style="display:flex;align-items:center">
-      <div style="flex:1">
-        <div class="chat-header-name">${escapeHtml(name)}</div>
-        <div class="chat-header-meta">${u.username ? '@' + escapeHtml(u.username) : ''} · TG ${u.telegram_id || '—'}</div>
-      </div>
-      ${assignBtn}
-    </div>
-    <div class="chat-messages" id="cm-${chat.id}"></div>
-    <div class="chat-reply-area">
-      <textarea class="chat-reply-input" id="ri-${chat.id}" rows="1" placeholder="Сообщение пользователю..."></textarea>
-      <button class="chat-reply-send" id="rb-${chat.id}">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
-        </svg>
-      </button>
-    </div>
-  `;
+// ── Telegram BackButton ───────────────────────
+function setTgBackButton(show) {
+  if (!tg?.BackButton) return;
   try {
-    const msgs = await api('GET', `${apiBase}/chats/${chat.id}/messages`);
-    const wrap = $(`cm-${chat.id}`);
-    msgs.forEach(m => wrap.appendChild(messageEl(m)));
-    wrap.scrollTop = wrap.scrollHeight;
-  } catch (e) { showToast(e.message); }
+    if (show) { tg.BackButton.show(); tg.BackButton.onClick(handleTgBack); }
+    else { tg.BackButton.offClick(handleTgBack); tg.BackButton.hide(); }
+  } catch {}
+}
+function handleTgBack() { haptic('light'); showView('list'); }
 
-  $(`ri-${chat.id}`).addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatReply(chat.id, apiBase); }
+function showView(name) {
+  if (name === 'chat') {
+    $('listView').classList.remove('active');
+    $('chatView').classList.add('active');
+    if (window.innerWidth < 900) setTgBackButton(true);
+  } else {
+    $('chatView').classList.remove('active');
+    $('listView').classList.add('active');
+    CURRENT_CHAT_ID = null; CURRENT_USER = null;
+    document.querySelectorAll('.lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
+    setTgBackButton(false);
+  }
+}
+$('backBtn').addEventListener('click', () => { haptic('light'); showView('list'); });
+
+// ── Inbox (all users) ─────────────────────────
+async function loadUsers() {
+  try { USERS = await api('GET', '/api/manager/users'); renderUsers(); }
+  catch (e) { showToast(e.message); }
+}
+
+function renderUsers() {
+  const wrap = $('usersList'), meta = $('listMeta');
+  if (!USERS.length) {
+    meta.textContent = 'Пользователей пока нет';
+    wrap.innerHTML = `<div class="lawyer-list-empty"><div class="lawyer-list-empty-icon">👥</div><div class="lawyer-list-empty-title">Пока пусто</div><div class="lawyer-list-empty-text">Когда кто-то напишет боту — он появится здесь.</div></div>`;
+    return;
+  }
+  const withMsgs = USERS.filter(u => u.message_count > 0).length;
+  meta.innerHTML = `<strong>${USERS.length}</strong> ${pluralRu(USERS.length, 'пользователь', 'пользователя', 'пользователей')}` +
+    (withMsgs > 0 ? ` · <span class="meta-accent">${withMsgs} с перепиской</span>` : '');
+
+  wrap.innerHTML = '';
+  USERS.forEach((u, i) => {
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${u.user_id}`;
+    const last = u.last_message;
+    const lastIsSelf = last && last.sender_type && last.sender_type !== 'user' && last.sender_type !== 'system';
+    const senderLabel = lastIsSelf ? 'Вы' : (last?.sender_type === 'system' ? 'Система' : (u.first_name || 'Клиент'));
+    const preview = last?.content || 'Нет сообщений';
+    const time = smartTime(last?.created_at || u.updated_at || u.created_at);
+
+    const item = document.createElement('div');
+    item.className = 'lawyer-chat-item' + (u.chat_id && u.chat_id === CURRENT_CHAT_ID ? ' active' : '');
+    item.dataset.id = u.user_id;
+    if (u.chat_id) item.dataset.chatId = u.chat_id;
+    item.style.setProperty('--item-delay', `${Math.min(i * 35, 320)}ms`);
+    const color = avatarColorFromName(name);
+    item.innerHTML = `
+      <div class="lawyer-chat-item-avatar" data-color="${color}">${
+        u.photo_url ? `<img src="${escapeHtml(u.photo_url)}" alt=""/>` : escapeHtml(initials(name))
+      }</div>
+      <div class="lawyer-chat-item-body">
+        <div class="lawyer-chat-item-top">
+          <div class="lawyer-chat-item-name">${escapeHtml(name)}</div>
+          <div class="lawyer-chat-item-time">${escapeHtml(time)}</div>
+        </div>
+        <div class="lawyer-chat-item-preview"><span class="preview-sender${lastIsSelf ? ' is-self' : ''}">${escapeHtml(senderLabel)}:</span> ${escapeHtml(preview)}</div>
+        <div class="lawyer-chat-item-badges">
+          ${u.message_count > 0
+            ? `<span class="lawyer-badge count">${u.message_count} ${pluralRu(u.message_count, 'сообщ.', 'сообщ.', 'сообщ.')}</span>`
+            : `<span class="lawyer-badge free">🆕 новый</span>`}
+          ${u.username ? `<span class="lawyer-badge count">@${escapeHtml(u.username)}</span>` : ''}
+        </div>
+      </div>`;
+    item.addEventListener('click', () => { haptic('light'); openChat(u); });
+    wrap.appendChild(item);
   });
-  $(`rb-${chat.id}`).addEventListener('click', () => sendChatReply(chat.id, apiBase));
-  const ab = document.getElementById(`assignBtn-${chat.id}`);
-  if (ab) ab.addEventListener('click', () => openAssignModal(chat.user_id, name));
 }
 
-async function sendChatReply(chatId, apiBase) {
-  const input = $(`ri-${chatId}`);
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = '';
-  try {
-    const m = await api('POST', `${apiBase}/chats/${chatId}/messages`, { content: text });
-    addMessageIfNew(chatId, m);
-    loadMatchChats(); loadLawyerChats();
-  } catch (e) { showToast(e.message); }
+async function openChat(u) {
+  CURRENT_USER = u;
+  let chatId = u.chat_id;
+  if (!chatId) {
+    try { const r = await api('POST', '/api/manager/chats/open', { user_id: u.user_id }); chatId = r.chat_id; u.chat_id = chatId; }
+    catch (e) { showToast(e.message); return; }
+  }
+  CURRENT_CHAT_ID = chatId;
+  document.querySelectorAll('.lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.lawyer-chat-item[data-id="${u.user_id}"]`)?.classList.add('active');
+
+  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${u.user_id}`;
+  const sub = [u.username ? '@' + u.username : null, `Telegram ID ${u.telegram_id || '—'}`].filter(Boolean).join(' · ');
+  $('chatHeaderName').textContent = name;
+  $('chatHeaderSub').textContent = sub;
+  $('chatAvatar').innerHTML = u.photo_url ? `<img src="${escapeHtml(u.photo_url)}" alt=""/>` : escapeHtml(initials(name));
+  $('chatAvatar').style.background = AVATAR_GRADIENTS[avatarColorFromName(name)];
+
+  $('chatEmpty').style.display = 'none';
+  $('chatMessages').classList.remove('hidden');
+  $('replyArea').classList.remove('hidden');
+  $('replyInput').value = ''; $('replyInput').style.height = 'auto';
+  $('replyInput').placeholder = `Сообщение ${u.first_name || 'пользователю'}…`;
+  $('charCounter').classList.remove('show', 'warning', 'danger');
+
+  showView('chat');
+
+  try { const msgs = await api('GET', `/api/manager/chats/${chatId}/messages`); renderMessages(msgs); }
+  catch (e) { showToast(e.message); }
+  if (window.innerWidth >= 900) setTimeout(() => $('replyInput').focus(), 50);
 }
 
-// Append a message to chat #chatId only if it isn't already there.
-// Used by BOTH HTTP-reply and WS-broadcast paths — same payload comes
-// through both, dedup by message id via data-mid attribute.
-function addMessageIfNew(chatId, m) {
-  if (m == null || m.id == null) return;
-  const wrap = $(`cm-${chatId}`);
-  if (!wrap) return;
-  if (wrap.querySelector(`[data-mid="${m.id}"]`)) return;
-  wrap.appendChild(messageEl(m));
+// ── Messages (grouped, Telegram-like) ─────────
+function renderMessages(msgs) {
+  const wrap = $('chatMessages');
+  wrap.innerHTML = '';
+  let lastDateKey = null, lastSenderKey = null;
+  msgs.forEach((m, idx) => {
+    const dateKey = m.created_at ? new Date(m.created_at).toDateString() : null;
+    if (dateKey && dateKey !== lastDateKey) {
+      const sep = document.createElement('div');
+      sep.className = 'msg-date-separator';
+      sep.textContent = formatDateSeparator(m.created_at);
+      wrap.appendChild(sep);
+      lastDateKey = dateKey; lastSenderKey = null;
+    }
+    const senderKey = `${m.sender_type}:${m.sender_id || m.sender_name || ''}`;
+    const isCont = senderKey === lastSenderKey && m.sender_type !== 'system';
+    const next = msgs[idx + 1];
+    const nextKey = next ? `${next.sender_type}:${next.sender_id || next.sender_name || ''}` : null;
+    const nextDate = next && next.created_at ? new Date(next.created_at).toDateString() : null;
+    const isLast = !next || nextKey !== senderKey || nextDate !== dateKey || next.sender_type === 'system';
+    const el = messageEl(m, { isCont, isLastInGroup: isLast });
+    el.dataset.sk = senderKey;
+    wrap.appendChild(el);
+    lastSenderKey = m.sender_type === 'system' ? null : senderKey;
+  });
   wrap.scrollTop = wrap.scrollHeight;
 }
 
-function messageEl(m) {
+function messageEl(m, opts = {}) {
+  const { isCont = false, isLastInGroup = true } = opts;
   const w = document.createElement('div');
   if (m.id != null) w.dataset.mid = m.id;
-  const kind = m.sender_type === 'user' ? 'from-user' :
-               m.sender_type === 'system' ? 'from-system' : 'from-staff';
-  w.className = `msg-wrap ${kind}`;
-  if (kind === 'from-staff' && m.sender_name) {
+  const kind = m.sender_type === 'user' ? 'from-user' : m.sender_type === 'system' ? 'from-system' : 'from-staff';
+  w.className = `msg-wrap ${kind}` + (isCont ? ' group-cont' : '') + (isLastInGroup ? ' group-last' : '');
+  if (!isCont && kind === 'from-staff' && m.sender_name) {
     const s = document.createElement('div'); s.className = 'msg-sender'; s.textContent = m.sender_name; w.appendChild(s);
   }
   const b = document.createElement('div'); b.className = 'msg-bubble';
   if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
-    b.innerHTML = `<a href="${m.file_url}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
+    b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
+    if (m.content) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = m.content; b.appendChild(c); }
   } else {
     b.textContent = m.content || '';
   }
   w.appendChild(b);
-  if (m.created_at) {
-    const t = document.createElement('div'); t.className = 'msg-time'; t.textContent = fmtTime(m.created_at); w.appendChild(t);
+  if (m.created_at && isLastInGroup && m.sender_type !== 'system') {
+    const t = document.createElement('div'); t.className = 'msg-time'; t.textContent = fmtMsgTime(m.created_at); w.appendChild(t);
   }
   return w;
 }
 
-// Replace an edited message in-place inside its open chat pane.
-function applyEdit(data) {
-  const pane = $(`cm-${data.chat_id}`);
-  if (!pane) return;
-  const el = pane.querySelector(`[data-mid="${data.id}"]`);
-  if (!el) return;
-  el.replaceWith(messageEl(data));
+function addMessageIfNew(m) {
+  if (m == null || m.id == null) return;
+  const wrap = $('chatMessages');
+  if (!wrap || wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  const lastEl = wrap.querySelector('.msg-wrap:last-child');
+  const senderKey = `${m.sender_type}:${m.sender_id || m.sender_name || ''}`;
+  const isCont = lastEl && lastEl.dataset.sk === senderKey && m.sender_type !== 'system';
+  if (isCont && lastEl) {
+    lastEl.classList.add('group-cont'); lastEl.classList.remove('group-last');
+    lastEl.querySelector('.msg-time')?.remove();
+    lastEl.querySelector('.msg-sender')?.remove();
+  }
+  const el = messageEl(m, { isCont, isLastInGroup: true });
+  el.dataset.sk = senderKey;
+  el.classList.add('msg-new');
+  wrap.appendChild(el);
+  const dist = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
+  if (dist < 140) wrap.scrollTo({ top: wrap.scrollHeight, behavior: 'smooth' });
 }
 
-// Mark a deleted message inside whichever open pane holds it.
+function applyEdit(m) {
+  const wrap = $('chatMessages');
+  const el = wrap?.querySelector(`[data-mid="${m.id}"]`);
+  if (!el) return;
+  const isCont = el.classList.contains('group-cont');
+  const isLast = el.classList.contains('group-last');
+  const sk = el.dataset.sk;
+  const fresh = messageEl(m, { isCont, isLastInGroup: isLast });
+  if (sk) fresh.dataset.sk = sk;
+  el.replaceWith(fresh);
+}
 function applyDelete(messageId) {
-  const el = document.querySelector(`[data-mid="${messageId}"]`);
+  const el = $('chatMessages')?.querySelector(`[data-mid="${messageId}"]`);
   if (!el) return;
   const b = el.querySelector('.msg-bubble');
-  if (b) {
-    b.textContent = 'Сообщение удалено';
-    b.style.opacity = '0.55';
-    b.style.fontStyle = 'italic';
-  }
+  if (b) { b.textContent = 'Сообщение удалено'; b.style.opacity = '0.55'; b.style.fontStyle = 'italic'; }
   el.querySelector('.msg-time')?.remove();
 }
 
-// ── Lawyers CRUD ──────────────────────────────
+// ── Send reply ────────────────────────────────
+async function sendReply() {
+  const input = $('replyInput'), btn = $('replyBtn');
+  const text = input.value.trim();
+  if (!text || !CURRENT_CHAT_ID) return;
+  input.value = ''; input.style.height = 'auto';
+  $('charCounter').classList.remove('show', 'warning', 'danger');
+  btn.classList.add('sending'); haptic('medium');
+  try {
+    const m = await api('POST', `/api/manager/chats/${CURRENT_CHAT_ID}/messages`, { content: text });
+    btn.classList.remove('sending'); btn.classList.add('success'); haptic('success');
+    setTimeout(() => btn.classList.remove('success'), 380);
+    addMessageIfNew(m);
+    loadUsers();
+  } catch (e) { btn.classList.remove('sending'); showToast(e.message); haptic('error'); input.value = text; }
+}
+$('replyBtn').addEventListener('click', sendReply);
+
+const REPLY_MAX = 4000;
+$('replyInput').addEventListener('input', (e) => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 130) + 'px';
+  const len = e.target.value.length, counter = $('charCounter');
+  if (len >= 400) {
+    counter.textContent = `${len} / ${REPLY_MAX}`;
+    counter.classList.add('show');
+    counter.classList.toggle('warning', len >= REPLY_MAX * 0.8);
+    counter.classList.toggle('danger', len >= REPLY_MAX);
+  } else counter.classList.remove('show', 'warning', 'danger');
+});
+$('replyInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); }
+});
+
+// ── Assign lawyer ─────────────────────────────
+$('assignBtn').addEventListener('click', openAssignModal);
+function openAssignModal() {
+  if (!CURRENT_USER) { showToast('Сначала выберите пользователя'); return; }
+  ASSIGN_USER_ID = CURRENT_USER.user_id;
+  const name = [CURRENT_USER.first_name, CURRENT_USER.last_name].filter(Boolean).join(' ') || CURRENT_USER.username || `#${CURRENT_USER.user_id}`;
+  $('assignUserInfo').textContent = `Пользователь: ${name}`;
+  const list = $('assignLawyerList'); list.innerHTML = '';
+  const active = LAWYERS.filter(l => l.is_active);
+  if (!active.length) {
+    list.innerHTML = `<div style="padding:14px;color:var(--text-secondary);font-size:13px">Нет активных юристов — сначала добавьте во вкладке «Юристы».</div>`;
+  } else {
+    for (const l of active) {
+      const r = document.createElement('div'); r.className = 'data-row';
+      r.innerHTML = `
+        <div class="grow">
+          <div class="data-name">${escapeHtml(l.full_name)}</div>
+          <div class="data-sub">${escapeHtml(l.specialization || 'без категории')} · ${l.is_online ? '🟢 онлайн' : '⚫ оффлайн'}</div>
+        </div>
+        <button class="btn-primary" style="width:auto;padding:8px 14px" data-id="${l.id}">Выбрать</button>`;
+      r.querySelector('button').addEventListener('click', () => assignLawyer(l.id, l.full_name));
+      list.appendChild(r);
+    }
+  }
+  $('assignModal').classList.remove('hidden');
+}
+$('assignCancel').addEventListener('click', () => $('assignModal').classList.add('hidden'));
+async function assignLawyer(lawyerId, lawyerName) {
+  if (!ASSIGN_USER_ID) return;
+  try {
+    await api('POST', '/api/manager/assign-lawyer', { user_id: ASSIGN_USER_ID, lawyer_id: lawyerId });
+    $('assignModal').classList.add('hidden');
+    showToast(`Юрист «${lawyerName}» назначен`); haptic('success');
+  } catch (e) { showToast(e.message); }
+}
+
+// ── Lawyers by category ───────────────────────
 async function loadLawyers() {
-  try { LAWYERS = await api('GET', '/api/manager/lawyers'); renderLawyers(); }
+  try { LAWYERS = await api('GET', '/api/manager/lawyers'); renderLawyersByCategory(); }
   catch (e) { showToast(e.message); }
 }
 
-function renderLawyers() {
-  const wrap = $('lawyersList');
+function renderLawyersByCategory() {
+  const wrap = $('lawyersByCategory');
   if (!LAWYERS.length) {
-    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Юристов нет. Добавьте первого.</div>`;
+    wrap.innerHTML = `<div class="lawyer-list-empty"><div class="lawyer-list-empty-icon">⚖️</div><div class="lawyer-list-empty-title">Юристов нет</div><div class="lawyer-list-empty-text">Добавьте первого юриста кнопкой выше.</div></div>`;
     return;
   }
-  wrap.innerHTML = '';
+  const groups = {};
   for (const l of LAWYERS) {
-    const r = document.createElement('div');
-    r.className = 'data-row';
-    if (!l.is_active) r.style.opacity = '0.5';
-    r.innerHTML = `
-      <div class="grow">
-        <div class="data-name">${escapeHtml(l.full_name)}</div>
-        <div class="data-sub">@${escapeHtml(l.login)} · ${escapeHtml(l.specialization || 'не указана')} · TG ${l.telegram_id || '—'} · ${l.is_online ? '🟢 онлайн' : '⚫ оффлайн'}${!l.is_active ? ' · уволен' : ''}</div>
-      </div>
-      <div class="data-actions">
-        <button class="btn-danger" data-id="${l.id}">${l.is_active ? 'Уволить' : 'Удалён'}</button>
-      </div>
-    `;
-    r.querySelector('button.btn-danger').addEventListener('click', async (e) => {
-      if (!l.is_active) return;
-      if (!confirm(`Уволить юриста "${l.full_name}"?`)) return;
-      try { await api('DELETE', `/api/manager/lawyers/${l.id}`); loadLawyers(); showToast('Юрист удалён'); }
-      catch (err) { showToast(err.message); }
-    });
-    wrap.appendChild(r);
+    const cat = (l.specialization || '').trim() || 'Без категории';
+    (groups[cat] = groups[cat] || []).push(l);
+  }
+  const cats = Object.keys(groups).sort((a, b) =>
+    a === 'Без категории' ? 1 : b === 'Без категории' ? -1 : a.localeCompare(b, 'ru'));
+  wrap.innerHTML = '';
+  for (const cat of cats) {
+    const sec = document.createElement('div'); sec.className = 'mgr-cat';
+    const title = document.createElement('div'); title.className = 'mgr-cat-title';
+    title.innerHTML = `${escapeHtml(cat)} <span class="mgr-cat-count">${groups[cat].length}</span>`;
+    sec.appendChild(title);
+    for (const l of groups[cat]) sec.appendChild(lawyerCard(l));
+    wrap.appendChild(sec);
   }
 }
 
+function lawyerCard(l) {
+  const card = document.createElement('div');
+  card.className = 'mgr-lawyer-card' + (l.is_active ? '' : ' inactive');
+  const color = avatarColorFromName(l.full_name);
+  card.innerHTML = `
+    <div class="mgr-lawyer-av" data-color="${color}">${escapeHtml(initials(l.full_name))}</div>
+    <div class="mgr-lawyer-info">
+      <div class="mgr-lawyer-name">${escapeHtml(l.full_name)}</div>
+      <div class="mgr-lawyer-sub">@${escapeHtml(l.login)} · TG ${l.telegram_id || '—'} · ${l.is_online ? '🟢 онлайн' : '⚫ оффлайн'}${l.is_active ? '' : ' · уволен'}</div>
+    </div>
+    ${l.is_active ? `<button class="btn-danger" data-id="${l.id}">Уволить</button>` : ''}`;
+  const btn = card.querySelector('.btn-danger');
+  if (btn) btn.addEventListener('click', async () => {
+    if (!confirm(`Уволить юриста «${l.full_name}»?`)) return;
+    try { await api('DELETE', `/api/manager/lawyers/${l.id}`); loadLawyers(); showToast('Юрист уволен'); }
+    catch (e) { showToast(e.message); }
+  });
+  return card;
+}
+
+// ── Add lawyer modal ──────────────────────────
 $('addLawyerBtn').addEventListener('click', () => {
   $('lwName').value = ''; $('lwLogin').value = ''; $('lwPassword').value = '';
   $('lwSpec').value = ''; $('lwTgId').value = ''; $('lwError').textContent = '';
@@ -329,55 +502,13 @@ $('lwSave').addEventListener('click', async () => {
     specialization: $('lwSpec').value.trim() || null,
     telegram_id: $('lwTgId').value ? parseInt($('lwTgId').value) : null,
   };
-  if (!body.full_name || !body.login || !body.password) {
-    $('lwError').textContent = 'Заполните ФИО, логин и пароль'; return;
-  }
+  if (!body.full_name || !body.login || !body.password) { $('lwError').textContent = 'Заполните ФИО, логин и пароль'; return; }
   try {
     await api('POST', '/api/manager/lawyers', body);
     $('lawyerModal').classList.add('hidden');
-    loadLawyers();
-    showToast('Юрист добавлен');
+    loadLawyers(); showToast('Юрист добавлен'); haptic('success');
   } catch (e) { $('lwError').textContent = e.message; }
 });
-
-// ── Assign lawyer modal ───────────────────────
-function openAssignModal(userId, userName) {
-  ASSIGN_USER_ID = userId;
-  $('assignUserInfo').textContent = `Пользователь: ${userName}`;
-  const list = $('assignLawyerList');
-  list.innerHTML = '';
-  const active = LAWYERS.filter(l => l.is_active);
-  if (!active.length) {
-    list.innerHTML = `<div style="padding:14px;color:var(--text-secondary);font-size:13px">Нет активных юристов — сначала добавьте.</div>`;
-  } else {
-    for (const l of active) {
-      const r = document.createElement('div');
-      r.className = 'data-row';
-      r.innerHTML = `
-        <div class="grow">
-          <div class="data-name">${escapeHtml(l.full_name)}</div>
-          <div class="data-sub">${escapeHtml(l.specialization || 'без специализации')} · ${l.is_online ? '🟢 онлайн' : '⚫ оффлайн'}</div>
-        </div>
-        <button class="btn-primary" style="width:auto;padding:8px 14px" data-id="${l.id}">Выбрать</button>
-      `;
-      r.querySelector('button').addEventListener('click', () => assignLawyer(l.id, l.full_name));
-      list.appendChild(r);
-    }
-  }
-  $('assignModal').classList.remove('hidden');
-}
-$('assignCancel').addEventListener('click', () => $('assignModal').classList.add('hidden'));
-
-async function assignLawyer(lawyerId, lawyerName) {
-  if (!ASSIGN_USER_ID) return;
-  try {
-    await api('POST', '/api/manager/assign-lawyer', { user_id: ASSIGN_USER_ID, lawyer_id: lawyerId });
-    $('assignModal').classList.add('hidden');
-    showToast(`Юрист "${lawyerName}" назначен`);
-    loadLawyerChats();
-    loadMatchChats();
-  } catch (e) { showToast(e.message); }
-}
 
 // ── WebSocket ─────────────────────────────────
 function connectWS() {
@@ -387,20 +518,22 @@ function connectWS() {
   WS.onmessage = (e) => {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
-      const cid = data.chat_id;
-      if (cid === CURRENT_MATCH_ID) addMessageIfNew(cid, data);
-      if (cid === CURRENT_LAWYER_CHAT_ID) addMessageIfNew(cid, data);
-      loadMatchChats(); loadLawyerChats();
+      if (data.chat_id === CURRENT_CHAT_ID) addMessageIfNew(data);
+      else {
+        const item = document.querySelector(`.lawyer-chat-item[data-chat-id="${data.chat_id}"]`);
+        if (item) { item.classList.remove('pulse'); void item.offsetWidth; item.classList.add('pulse'); setTimeout(() => item.classList.remove('pulse'), 1100); }
+        if (data.sender_type === 'user') haptic('light');
+      }
+      loadUsers();
     } else if (data.type === 'edit') {
-      applyEdit(data);
-      loadMatchChats(); loadLawyerChats();
+      applyEdit(data); loadUsers();
     } else if (data.type === 'delete') {
-      applyDelete(data.message_id);
-      loadMatchChats(); loadLawyerChats();
+      applyDelete(data.message_id); loadUsers();
     }
   };
   WS.onclose = () => setTimeout(connectWS, 3000);
-  setInterval(() => { try { WS?.send(JSON.stringify({type:'ping'})); } catch {} }, 25000);
+  setInterval(() => { try { WS?.send(JSON.stringify({ type: 'ping' })); } catch {} }, 25000);
 }
 
+// ── Start ─────────────────────────────────────
 checkAuth();
