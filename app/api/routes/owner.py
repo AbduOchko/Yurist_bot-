@@ -1,5 +1,5 @@
 """Owner panel — full administrative control."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -28,6 +28,7 @@ from app.db.models import (
     ChatType,
     Message,
     RequiredChannel,
+    SenderType,
     Setting,
     Staff,
     StaffRole,
@@ -101,27 +102,89 @@ async def list_support_chats(
 
 
 # ── Stats ─────────────────────────────────────────────────────────────
+async def _daily_series(session, model, days: int) -> list[dict]:
+    """Per-day counts for the last `days` days (gaps filled with 0)."""
+    start = (datetime.utcnow() - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    conds = [model.created_at >= start]
+    if model is Message:
+        conds.append(Message.is_deleted == False)  # noqa: E712
+    rows = (await session.execute(
+        select(func.date(model.created_at), func.count())
+        .where(*conds)
+        .group_by(func.date(model.created_at))
+    )).all()
+    counts = {}
+    for d, c in rows:
+        key = d.isoformat() if hasattr(d, "isoformat") else str(d)
+        counts[key] = int(c)
+    base = start.date()
+    out = []
+    for i in range(days):
+        key = (base + timedelta(days=i)).isoformat()
+        out.append({"date": key, "count": counts.get(key, 0)})
+    return out
+
+
 @router.get("/stats")
 async def stats(
     staff: Staff = OwnerDep,
     session: AsyncSession = Depends(get_session),
 ):
-    counts = {}
-    counts["total_users"] = (await session.execute(select(func.count(User.id)))).scalar_one()
-    counts["total_messages"] = (
+    out = {}
+    out["total_users"] = (await session.execute(select(func.count(User.id)))).scalar_one()
+    out["total_messages"] = (
         await session.execute(select(func.count(Message.id)).where(Message.is_deleted == False))  # noqa: E712
     ).scalar_one()
-    for t in (ChatType.ai, ChatType.lawyer, ChatType.match):
-        counts[f"{t.value}_chats"] = (
-            await session.execute(select(func.count(Chat.id)).where(Chat.chat_type == t))
-        ).scalar_one()
-    for r in (StaffRole.lawyer, StaffRole.manager, StaffRole.owner):
-        counts[f"{r.value}_count"] = (
-            await session.execute(
-                select(func.count(Staff.id)).where(Staff.role == r, Staff.is_active == True)  # noqa: E712
-            )
-        ).scalar_one()
-    return counts
+
+    # Chats by type (+ flat back-compat keys)
+    rows = (await session.execute(select(Chat.chat_type, func.count()).group_by(Chat.chat_type))).all()
+    chats_by_type = {t.value: 0 for t in ChatType}
+    for ct, c in rows:
+        chats_by_type[ct.value if hasattr(ct, "value") else str(ct)] = int(c)
+    out["chats_by_type"] = chats_by_type
+    for t in ChatType:
+        out[f"{t.value}_chats"] = chats_by_type[t.value]
+
+    # Staff by role (active) (+ flat back-compat keys)
+    rows = (await session.execute(
+        select(Staff.role, func.count()).where(Staff.is_active == True).group_by(Staff.role)  # noqa: E712
+    )).all()
+    staff_by_role = {r.value: 0 for r in StaffRole}
+    for role, c in rows:
+        staff_by_role[role.value if hasattr(role, "value") else str(role)] = int(c)
+    out["staff_by_role"] = staff_by_role
+    for r in StaffRole:
+        out[f"{r.value}_count"] = staff_by_role[r.value]
+
+    # Messages by sender
+    rows = (await session.execute(
+        select(Message.sender_type, func.count())
+        .where(Message.is_deleted == False)  # noqa: E712
+        .group_by(Message.sender_type)
+    )).all()
+    by_sender = {st.value: 0 for st in SenderType}
+    for st, c in rows:
+        by_sender[st.value if hasattr(st, "value") else str(st)] = int(c)
+    out["messages_by_sender"] = by_sender
+
+    # Today
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    out["new_users_today"] = (
+        await session.execute(select(func.count(User.id)).where(User.created_at >= today))
+    ).scalar_one()
+    out["messages_today"] = (
+        await session.execute(
+            select(func.count(Message.id)).where(Message.created_at >= today, Message.is_deleted == False)  # noqa: E712
+        )
+    ).scalar_one()
+
+    # Time series for charts
+    out["users_series"] = await _daily_series(session, User, 30)
+    out["messages_series"] = await _daily_series(session, Message, 14)
+
+    return out
 
 
 # ── Users management ──────────────────────────────────────────────────

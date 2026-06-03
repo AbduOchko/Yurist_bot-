@@ -104,25 +104,170 @@ document.querySelectorAll('.app-tab').forEach(btn => {
   });
 });
 
-// ── Stats ─────────────────────────────────────
+// ── Stats dashboard ───────────────────────────
+let _svgId = 0;
+const fmtNum = (n) => (n ?? 0).toLocaleString('ru-RU');
+const totalOf = (obj) => Object.values(obj || {}).reduce((a, b) => a + (b || 0), 0);
+
+const CHAT_TYPE_META = {
+  ai:      ['ИИ-Советник', '#a78bfa'],
+  lawyer:  ['Личный юрист', '#60a5fa'],
+  match:   ['Подбор', '#34c759'],
+  support: ['Поддержка', '#fbbf24'],
+  group:   ['Групповые', '#f472b6'],
+};
+const SENDER_META = {
+  user:    ['Клиенты', '#a78bfa'],
+  ai:      ['ИИ', '#22d3ee'],
+  lawyer:  ['Юристы', '#60a5fa'],
+  manager: ['Менеджеры', '#fbbf24'],
+  system:  ['Система', '#94a3b8'],
+};
+const ROLE_META = {
+  owner:   ['Владельцы', '#fbbf24'],
+  manager: ['Менеджеры', '#34c759'],
+  lawyer:  ['Юристы', '#60a5fa'],
+};
+
+function dictToItems(dict, meta) {
+  return Object.keys(meta).map(k => ({
+    label: meta[k][0], color: meta[k][1], value: (dict && dict[k]) || 0,
+  }));
+}
+
 async function loadStats() {
   try {
     const s = await api('GET', '/api/owner/stats');
-    const grid = $('statsGrid');
-    const entries = [
-      ['Пользователи', s.total_users],
-      ['Сообщений', s.total_messages],
-      ['ИИ-чатов', s.ai_chats],
-      ['Чатов юристов', s.lawyer_chats],
-      ['Чатов подбора', s.match_chats],
-      ['Юристов', s.lawyer_count],
-      ['Менеджеров', s.manager_count],
-      ['Владельцев', s.owner_count],
-    ];
-    grid.innerHTML = entries.map(([label, n]) =>
-      `<div class="stat-card"><div class="stat-num">${n ?? 0}</div><div class="stat-label">${label}</div></div>`
-    ).join('');
+    renderKpis(s);
+    $('chartUsers').innerHTML = svgAreaChart(s.users_series || [], '#60a5fa');
+    $('chartMessages').innerHTML = svgBarChart(s.messages_series || [], '#34c759');
+    $('chartChatTypes').innerHTML = donutCard(dictToItems(s.chats_by_type, CHAT_TYPE_META), totalOf(s.chats_by_type), 'чатов');
+    $('chartStaff').innerHTML = donutCard(dictToItems(s.staff_by_role, ROLE_META), totalOf(s.staff_by_role), 'сотр.');
+    $('chartSenders').innerHTML = hbars(dictToItems(s.messages_by_sender, SENDER_META));
   } catch (e) { showToast(e.message); }
+}
+
+function renderKpis(s) {
+  const kpis = [
+    { label: 'Пользователи', value: s.total_users, sub: s.new_users_today ? `+${s.new_users_today} сегодня` : 'за всё время', color: '#60a5fa' },
+    { label: 'Сообщения', value: s.total_messages, sub: s.messages_today ? `+${s.messages_today} сегодня` : 'за всё время', color: '#34c759' },
+    { label: 'Активные юристы', value: s.lawyer_count, sub: 'в работе', color: '#a78bfa' },
+    { label: 'Всего чатов', value: totalOf(s.chats_by_type), sub: 'все типы', color: '#fbbf24' },
+  ];
+  $('statsKpis').innerHTML = kpis.map(k => `
+    <div class="kpi-card" style="--kpi:${k.color}">
+      <div class="kpi-value">${fmtNum(k.value)}</div>
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-sub">${k.sub}</div>
+    </div>`).join('');
+}
+
+function _fmtDay(d) {
+  return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+// Area/line chart for a [{date,count}] series.
+function svgAreaChart(series, color) {
+  const W = 340, H = 150, padL = 8, padR = 8, padT = 16, padB = 22;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const n = series.length;
+  if (!n) return `<div style="color:var(--text-tertiary);font-size:13px;padding:20px 0;text-align:center">Нет данных</div>`;
+  const max = Math.max(1, ...series.map(s => s.count));
+  const x = (i) => padL + (n <= 1 ? innerW / 2 : i * innerW / (n - 1));
+  const y = (v) => padT + innerH * (1 - v / max);
+  const pts = series.map((s, i) => [x(i), y(s.count)]);
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const area = `${line} L${x(n - 1).toFixed(1)},${(padT + innerH).toFixed(1)} L${x(0).toFixed(1)},${(padT + innerH).toFixed(1)} Z`;
+  const grid = [0, 0.5, 1].map(f => `<line x1="${padL}" y1="${(padT + innerH * f).toFixed(1)}" x2="${W - padR}" y2="${(padT + innerH * f).toFixed(1)}" stroke="rgba(255,255,255,0.06)"/>`).join('');
+  const gid = 'ag' + (_svgId++);
+  const last = pts[n - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
+    ${grid}
+    <text x="${padL}" y="${padT - 5}" fill="rgba(255,255,255,0.45)" font-size="9">${max}</text>
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.5" fill="${color}"/>
+    <text x="${padL}" y="${H - 6}" fill="rgba(255,255,255,0.45)" font-size="9">${_fmtDay(series[0].date)}</text>
+    <text x="${W - padR}" y="${H - 6}" text-anchor="end" fill="rgba(255,255,255,0.45)" font-size="9">${_fmtDay(series[n - 1].date)}</text>
+  </svg>`;
+}
+
+// Vertical bar chart for a [{date,count}] series.
+function svgBarChart(series, color) {
+  const W = 340, H = 150, padL = 8, padR = 8, padT = 16, padB = 22;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const n = series.length;
+  if (!n) return `<div style="color:var(--text-tertiary);font-size:13px;padding:20px 0;text-align:center">Нет данных</div>`;
+  const max = Math.max(1, ...series.map(s => s.count));
+  const slot = innerW / n;
+  const bw = Math.max(3, slot * 0.62);
+  const gid = 'bg' + (_svgId++);
+  let bars = '';
+  series.forEach((s, i) => {
+    const bh = innerH * (s.count / max);
+    const bx = padL + i * slot + (slot - bw) / 2;
+    const by = padT + innerH - bh;
+    bars += `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, bh).toFixed(1)}" rx="2" fill="url(#${gid})"/>`;
+  });
+  const grid = [0, 0.5, 1].map(f => `<line x1="${padL}" y1="${(padT + innerH * f).toFixed(1)}" x2="${W - padR}" y2="${(padT + innerH * f).toFixed(1)}" stroke="rgba(255,255,255,0.06)"/>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="${color}" stop-opacity="0.4"/>
+    </linearGradient></defs>
+    ${grid}
+    <text x="${padL}" y="${padT - 5}" fill="rgba(255,255,255,0.45)" font-size="9">${max}</text>
+    ${bars}
+    <text x="${padL}" y="${H - 6}" fill="rgba(255,255,255,0.45)" font-size="9">${_fmtDay(series[0].date)}</text>
+    <text x="${W - padR}" y="${H - 6}" text-anchor="end" fill="rgba(255,255,255,0.45)" font-size="9">${_fmtDay(series[n - 1].date)}</text>
+  </svg>`;
+}
+
+function svgDonut(items, total, unit) {
+  const size = 120, stroke = 16, r = (size - stroke) / 2, cx = size / 2, cy = size / 2;
+  const C = 2 * Math.PI * r;
+  let segs = '', offset = 0;
+  if (total > 0) {
+    for (const it of items) {
+      if (!it.value) continue;
+      const len = (it.value / total) * C;
+      segs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${it.color}" stroke-width="${stroke}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+      offset += len;
+    }
+  } else {
+    segs = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="${stroke}"/>`;
+  }
+  return `<svg viewBox="0 0 ${size} ${size}" style="width:120px;height:120px;flex-shrink:0">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="${stroke}"/>
+    ${segs}
+    <text x="${cx}" y="${cy - 1}" text-anchor="middle" fill="#fff" font-size="22" font-weight="800">${total}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-size="9">${unit}</text>
+  </svg>`;
+}
+
+function donutCard(items, total, unit) {
+  const legend = items.map(i =>
+    `<div class="legend-row"><span class="legend-dot" style="background:${i.color}"></span><span class="legend-label">${i.label}</span><span class="legend-val">${i.value}</span></div>`
+  ).join('');
+  return `<div class="donut-wrap">${svgDonut(items, total, unit)}<div class="donut-legend">${legend}</div></div>`;
+}
+
+function hbars(items) {
+  const max = Math.max(1, ...items.map(i => i.value));
+  const total = items.reduce((a, i) => a + i.value, 0) || 1;
+  return `<div class="hbars">${items.map(i => {
+    const pct = Math.round(i.value / total * 100);
+    const w = Math.max(2, i.value / max * 100);
+    return `<div class="hbar-row">
+      <div class="hbar-label">${i.label}</div>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${w}%;background:${i.color}"></div></div>
+      <div class="hbar-val">${fmtNum(i.value)} <span class="hbar-pct">${pct}%</span></div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // ── Users ─────────────────────────────────────

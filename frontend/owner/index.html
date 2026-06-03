@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0a1024"/>
   <title>Юрист Бот — Владелец</title>
   <link rel="stylesheet" href="/staff/shared/staff.css"/>
+  <link rel="stylesheet" href="/owner/css/owner.css"/>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script>
     const tg = window.Telegram?.WebApp;
@@ -60,7 +61,33 @@
   <div class="app-body">
     <div class="app-panel active" id="tab-stats">
       <div class="section-title">Статистика</div>
-      <div class="card-grid" id="statsGrid"></div>
+      <div class="kpi-grid" id="statsKpis"></div>
+
+      <div class="chart-card">
+        <div class="chart-title">Новые пользователи <span class="chart-hint">за 30 дней</span></div>
+        <div id="chartUsers"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">Активность · сообщения <span class="chart-hint">за 14 дней</span></div>
+        <div id="chartMessages"></div>
+      </div>
+
+      <div class="chart-row">
+        <div class="chart-card" style="margin-bottom:0">
+          <div class="chart-title">Чаты по типам</div>
+          <div id="chartChatTypes"></div>
+        </div>
+        <div class="chart-card" style="margin-bottom:0">
+          <div class="chart-title">Сотрудники</div>
+          <div id="chartStaff"></div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">Сообщения по отправителям</div>
+        <div id="chartSenders"></div>
+      </div>
     </div>
 
     <div class="app-panel" id="tab-users">
