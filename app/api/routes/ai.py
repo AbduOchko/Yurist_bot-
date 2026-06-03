@@ -68,19 +68,18 @@ async def _send_error(chat_id: int, text: str):
 
 
 async def _broadcast_done(chat_id: int, ai_msg, content: str):
-    await manager.broadcast_to_chat(
-        chat_id,
-        {
-            "type": "ai_done",
-            "id": ai_msg.id,
-            "chat_id": chat_id,
-            "sender_type": "ai",
-            "sender_name": "ИИ-Советник",
-            "content": content,
-            "message_type": "text",
-            "created_at": ai_msg.created_at.isoformat(),
-        },
-    )
+    payload = {
+        "id": ai_msg.id,
+        "chat_id": chat_id,
+        "sender_type": "ai",
+        "sender_name": "ИИ-Советник",
+        "content": content,
+        "message_type": "text",
+        "created_at": ai_msg.created_at.isoformat(),
+    }
+    await manager.broadcast_to_chat(chat_id, {"type": "ai_done", **payload})
+    # Mirror to owners for live oversight ("Чаты с ИИ").
+    await manager.broadcast_to_owners({"type": "message", **payload})
 
 
 async def _ai_say(session, chat_id: int, text: str):
@@ -159,18 +158,17 @@ async def ai_chat(
         content=data.user_message,
         sender_id=data.user_id,
     )
-    await manager.broadcast_to_chat(
-        data.chat_id,
-        {
-            "type": "message",
-            "id": user_msg.id,
-            "chat_id": data.chat_id,
-            "sender_type": "user",
-            "content": data.user_message,
-            "message_type": "text",
-            "created_at": user_msg.created_at.isoformat(),
-        },
-    )
+    user_payload = {
+        "type": "message",
+        "id": user_msg.id,
+        "chat_id": data.chat_id,
+        "sender_type": "user",
+        "content": data.user_message,
+        "message_type": "text",
+        "created_at": user_msg.created_at.isoformat(),
+    }
+    await manager.broadcast_to_chat(data.chat_id, user_payload)
+    await manager.broadcast_to_owners(user_payload)  # live oversight
 
     chat = await crud.get_chat_by_id(session, data.chat_id)
     after = chat.user_cleared_at if chat else None
@@ -239,21 +237,20 @@ async def ai_media(
         file_size=data.file_size,
         sender_id=data.user_id,
     )
-    await manager.broadcast_to_chat(
-        data.chat_id,
-        {
-            "type": "message",
-            "id": user_msg.id,
-            "chat_id": data.chat_id,
-            "sender_type": "user",
-            "content": stored_content,
-            "message_type": data.message_type,
-            "file_url": data.file_url,
-            "file_name": data.file_name,
-            "file_size": data.file_size,
-            "created_at": user_msg.created_at.isoformat(),
-        },
-    )
+    media_payload = {
+        "type": "message",
+        "id": user_msg.id,
+        "chat_id": data.chat_id,
+        "sender_type": "user",
+        "content": stored_content,
+        "message_type": data.message_type,
+        "file_url": data.file_url,
+        "file_name": data.file_name,
+        "file_size": data.file_size,
+        "created_at": user_msg.created_at.isoformat(),
+    }
+    await manager.broadcast_to_chat(data.chat_id, media_payload)
+    await manager.broadcast_to_owners(media_payload)  # live oversight
 
     # ── 2a. Voice: GigaChat не принимает аудио напрямую ──
     if mtype == MessageType.voice:

@@ -201,6 +201,21 @@ async def chats_by_staff(
     return {"staff": staff_payload, "chats": [_serialize_oversight_chat(c, names) for c in chats]}
 
 
+@router.get("/ai-chats")
+async def list_ai_chats(
+    staff: Staff = OwnerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    """All user↔AI chats — same oversight format as staff chats."""
+    chats = (await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.user), selectinload(Chat.messages))
+        .where(Chat.chat_type == ChatType.ai)
+        .order_by(Chat.updated_at.desc())
+    )).scalars().all()
+    return [_serialize_oversight_chat(c, {}) for c in chats]
+
+
 # ── Stats ─────────────────────────────────────────────────────────────
 async def _daily_series(session, model, days: int) -> list[dict]:
     """Per-day counts for the last `days` days (gaps filled with 0)."""

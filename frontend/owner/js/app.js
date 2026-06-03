@@ -9,6 +9,7 @@ let SUPPORT_CHATS = [];
 let CURRENT_SUPPORT_ID = null;
 let OW_CURRENT_STAFF = null;
 let OW_CURRENT_CHAT_ID = null;
+let _owReloadChats = null;   // reopens the level-2 list (staff chats or AI chats)
 
 const $ = (id) => document.getElementById(id);
 
@@ -466,7 +467,7 @@ function owRenderBreadcrumb(level) {
   bc.querySelectorAll('.ow-bc-back').forEach(b => b.addEventListener('click', () => {
     OW_CURRENT_CHAT_ID = null;
     if (b.dataset.to === 'staff') owShowLevel('staff');
-    else openOwStaff(OW_CURRENT_STAFF);
+    else if (_owReloadChats) _owReloadChats();
   }));
 }
 
@@ -489,6 +490,24 @@ function owRenderStaff(list) {
   for (const s of list) (groups[s.role] || (groups[s.role] = [])).push(s);
   const order = [['owner', '👑 Владельцы'], ['manager', '🧭 Менеджеры'], ['lawyer', '⚖️ Юристы']];
   wrap.innerHTML = '';
+
+  // ИИ-чаты — отдельная категория сверху
+  const aiTitle = document.createElement('div');
+  aiTitle.className = 'ow-cat-title';
+  aiTitle.innerHTML = `🤖 Автоматические`;
+  wrap.appendChild(aiTitle);
+  const aiRow = document.createElement('div');
+  aiRow.className = 'data-row ow-row-click';
+  aiRow.innerHTML = `
+    <div class="ow-staff-av">🤖</div>
+    <div class="grow">
+      <div class="data-name">ИИ-Советник</div>
+      <div class="data-sub">Все чаты пользователей с ИИ</div>
+    </div>
+    <svg class="ow-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`;
+  aiRow.addEventListener('click', openOwAi);
+  wrap.appendChild(aiRow);
+
   for (const [role, title] of order) {
     const arr = groups[role] || [];
     if (!arr.length) continue;
@@ -517,11 +536,25 @@ async function openOwStaff(s) {
   if (!s) return;
   OW_CURRENT_STAFF = s;
   OW_CURRENT_CHAT_ID = null;
+  _owReloadChats = () => openOwStaff(s);
   owShowLevel('chats');
   $('owChatList').innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">Загрузка…</div>`;
   try {
     const data = await api('GET', `/api/owner/chats/by-staff/${s.id}`);
     owRenderChats(data.chats || []);
+  } catch (e) { showToast(e.message); }
+}
+
+// Level 2 (alt) — all AI chats
+async function openOwAi() {
+  OW_CURRENT_STAFF = { full_name: 'Чаты с ИИ' };
+  OW_CURRENT_CHAT_ID = null;
+  _owReloadChats = openOwAi;
+  owShowLevel('chats');
+  $('owChatList').innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">Загрузка…</div>`;
+  try {
+    const chats = await api('GET', '/api/owner/ai-chats');
+    owRenderChats(chats || []);
   } catch (e) { showToast(e.message); }
 }
 
