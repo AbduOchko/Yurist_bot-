@@ -101,6 +101,106 @@ async def list_support_chats(
     return [_serialize_support_chat(c) for c in result.scalars().all()]
 
 
+# ── Oversight: все чаты конкретного сотрудника ────────────────────────
+_TYPE_LABELS = {
+    "ai": "ИИ-Советник",
+    "lawyer": "Личный юрист",
+    "match": "Подбор",
+    "support": "Поддержка",
+    "group": "Общий чат",
+}
+
+
+def _serialize_oversight_chat(c: Chat, names: dict) -> dict:
+    non_deleted = [m for m in c.messages if not m.is_deleted] if c.messages else []
+    last = None
+    if non_deleted:
+        lm = non_deleted[-1]
+        last = {
+            "content": lm.content,
+            "sender_type": lm.sender_type.value if lm.sender_type else None,
+            "sender_name": lm.sender_name,
+            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+        }
+    u = c.user
+    return {
+        "id": c.id,
+        "chat_type": c.chat_type.value,
+        "type_label": _TYPE_LABELS.get(c.chat_type.value, c.chat_type.value),
+        "category": "group" if c.chat_type == ChatType.group else "individual",
+        "user": {
+            "telegram_id": u.telegram_id if u else None,
+            "first_name": u.first_name if u else None,
+            "last_name": u.last_name if u else None,
+            "username": u.username if u else None,
+            "photo_url": u.photo_url if u else None,
+        },
+        "lawyer_name": names.get(c.lawyer_staff_id),
+        "manager_name": names.get(c.manager_staff_id),
+        "message_count": len(non_deleted),
+        "last_message": last,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+@router.get("/chats/by-staff/{staff_id}")
+async def chats_by_staff(
+    staff_id: int,
+    staff: Staff = OwnerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    """Every chat a given staff member is involved in (individual + groups)."""
+    target = (await session.execute(select(Staff).where(Staff.id == staff_id))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    chat_ids: set[int] = set()
+
+    # Lawyer: their lawyer-type chats AND groups (both via lawyer_staff_id).
+    if target.role == StaffRole.lawyer:
+        rows = (await session.execute(select(Chat.id).where(Chat.lawyer_staff_id == staff_id))).scalars().all()
+        chat_ids.update(rows)
+
+    # Manager / owner: groups they own + match chats they actually replied in.
+    if target.role in (StaffRole.manager, StaffRole.owner):
+        rows = (await session.execute(select(Chat.id).where(Chat.manager_staff_id == staff_id))).scalars().all()
+        chat_ids.update(rows)
+        rows = (await session.execute(
+            select(Message.chat_id)
+            .join(Chat, Chat.id == Message.chat_id)
+            .where(Message.sender_id == staff_id, Chat.chat_type == ChatType.match)
+            .distinct()
+        )).scalars().all()
+        chat_ids.update(rows)
+
+    # Owner: also the support chats (owner's domain).
+    if target.role == StaffRole.owner:
+        rows = (await session.execute(select(Chat.id).where(Chat.chat_type == ChatType.support))).scalars().all()
+        chat_ids.update(rows)
+
+    staff_payload = {"id": target.id, "role": target.role.value, "full_name": target.full_name}
+    if not chat_ids:
+        return {"staff": staff_payload, "chats": []}
+
+    chats = (await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.user), selectinload(Chat.messages))
+        .where(Chat.id.in_(chat_ids))
+        .order_by(Chat.updated_at.desc())
+    )).scalars().all()
+
+    name_ids = set()
+    for c in chats:
+        name_ids.update([c.lawyer_staff_id, c.manager_staff_id])
+    name_ids.discard(None)
+    names = {}
+    if name_ids:
+        srows = (await session.execute(select(Staff).where(Staff.id.in_(name_ids)))).scalars().all()
+        names = {s.id: s.full_name for s in srows}
+
+    return {"staff": staff_payload, "chats": [_serialize_oversight_chat(c, names) for c in chats]}
+
+
 # ── Stats ─────────────────────────────────────────────────────────────
 async def _daily_series(session, model, days: int) -> list[dict]:
     """Per-day counts for the last `days` days (gaps filled with 0)."""

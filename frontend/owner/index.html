@@ -105,8 +105,14 @@
 
     <div class="app-panel" id="tab-chats">
       <div class="section-title">Все чаты</div>
-      <div class="section-sub">Чаты юристов с пользователями. Только просмотр.</div>
-      <div class="data-list" id="chatsList"></div>
+      <div class="section-sub">Выберите сотрудника, затем чат — переписка видна целиком и в прямом эфире.</div>
+      <div class="ow-bc" id="owBreadcrumb"></div>
+      <div class="data-list" id="owStaffList"></div>
+      <div class="data-list hidden" id="owChatList"></div>
+      <div class="ow-chatview hidden" id="owChatView">
+        <div class="ow-chat-head" id="owChatHead"></div>
+        <div class="ow-messages" id="owMessages"></div>
+      </div>
     </div>
 
     <div class="app-panel" id="tab-support">

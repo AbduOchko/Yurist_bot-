@@ -7,6 +7,8 @@ let RESET_STAFF_ID = null;
 let WS = null;
 let SUPPORT_CHATS = [];
 let CURRENT_SUPPORT_ID = null;
+let OW_CURRENT_STAFF = null;
+let OW_CURRENT_CHAT_ID = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -408,26 +410,170 @@ $('pwdSave').addEventListener('click', async () => {
   } catch (e) { $('pwdError').textContent = e.message; }
 });
 
-// ── All chats ─────────────────────────────────
+// ── Chats oversight (Сотрудники → их чаты → переписка live) ───────────
+const OW_ROLE_META = { owner: ['👑', 'Владелец'], manager: ['🧭', 'Менеджер'], lawyer: ['⚖️', 'Юрист'] };
+
+function owRoleLabel(t, name) {
+  if (t === 'user') return `👤 ${name || 'Клиент'}`;
+  if (t === 'lawyer') return `⚖️ ${name || 'Юрист'}`;
+  if (t === 'manager') return `🧭 ${name || 'Менеджер'}`;
+  if (t === 'ai') return '🤖 ИИ-Советник';
+  return name || '';
+}
+function owRoleColor(t) {
+  return t === 'user' ? '#a78bfa' : t === 'lawyer' ? '#60a5fa' : t === 'manager' ? '#fbbf24' : t === 'ai' ? '#22d3ee' : '#94a3b8';
+}
+
+function owMessageEl(m) {
+  const t = m.sender_type;
+  const kind = t === 'user' ? 'from-user' : t === 'system' ? 'from-system' : 'from-staff';
+  const w = document.createElement('div'); if (m.id != null) w.dataset.mid = m.id;
+  w.className = `msg-wrap ${kind}`;
+  if (t !== 'system') {
+    const s = document.createElement('div'); s.className = 'msg-sender';
+    s.textContent = owRoleLabel(t, m.sender_name);
+    s.style.color = owRoleColor(t);
+    w.appendChild(s);
+  }
+  const b = document.createElement('div'); b.className = 'msg-bubble';
+  if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
+    b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
+    if (m.content) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = m.content; b.appendChild(c); }
+  } else b.textContent = m.content || '';
+  w.appendChild(b);
+  if (m.created_at && t !== 'system') {
+    const tm = document.createElement('div'); tm.className = 'msg-time'; tm.textContent = fmtTime(m.created_at); w.appendChild(tm);
+  }
+  return w;
+}
+
+function owShowLevel(level) {
+  $('owStaffList').classList.toggle('hidden', level !== 'staff');
+  $('owChatList').classList.toggle('hidden', level !== 'chats');
+  $('owChatView').classList.toggle('hidden', level !== 'chat');
+  owRenderBreadcrumb(level);
+}
+
+function owRenderBreadcrumb(level) {
+  const bc = $('owBreadcrumb');
+  if (level === 'staff') {
+    bc.innerHTML = `<span class="ow-bc-cur">Сотрудники</span><span class="ow-bc-hint">— выберите, чтобы увидеть чаты</span>`;
+  } else if (level === 'chats') {
+    bc.innerHTML = `<button class="ow-bc-back" data-to="staff">← Сотрудники</button><span class="ow-bc-sep">/</span><span class="ow-bc-cur">${escapeHtml(OW_CURRENT_STAFF?.full_name || '')}</span>`;
+  } else {
+    bc.innerHTML = `<button class="ow-bc-back" data-to="chats">← ${escapeHtml(OW_CURRENT_STAFF?.full_name || 'Назад')}</button><span class="ow-bc-sep">/</span><span class="ow-bc-cur">Переписка</span><span class="ow-live">Прямой эфир</span>`;
+  }
+  bc.querySelectorAll('.ow-bc-back').forEach(b => b.addEventListener('click', () => {
+    OW_CURRENT_CHAT_ID = null;
+    if (b.dataset.to === 'staff') owShowLevel('staff');
+    else openOwStaff(OW_CURRENT_STAFF);
+  }));
+}
+
+// Level 1 — staff list (entry from the tab)
 async function loadAllChats() {
+  OW_CURRENT_STAFF = null;
+  OW_CURRENT_CHAT_ID = null;
+  owShowLevel('staff');
+  $('owStaffList').innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">Загрузка…</div>`;
   try {
-    const list = await api('GET', '/api/manager/lawyer-chats');
-    const wrap = $('chatsList');
-    if (!list.length) { wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-secondary)">Нет чатов</div>'; return; }
-    wrap.innerHTML = '';
-    for (const c of list) {
-      const r = document.createElement('div'); r.className = 'data-row';
-      const u = c.user || {};
-      const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${c.user_id}`;
+    const list = await api('GET', '/api/owner/staff');
+    owRenderStaff(list);
+  } catch (e) { showToast(e.message); }
+}
+
+function owRenderStaff(list) {
+  const wrap = $('owStaffList');
+  if (!list.length) { wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">Сотрудников нет.</div>`; return; }
+  const groups = {};
+  for (const s of list) (groups[s.role] || (groups[s.role] = [])).push(s);
+  const order = [['owner', '👑 Владельцы'], ['manager', '🧭 Менеджеры'], ['lawyer', '⚖️ Юристы']];
+  wrap.innerHTML = '';
+  for (const [role, title] of order) {
+    const arr = groups[role] || [];
+    if (!arr.length) continue;
+    const h = document.createElement('div'); h.className = 'ow-cat-title';
+    h.innerHTML = `${title} <span class="ow-cat-count">${arr.length}</span>`;
+    wrap.appendChild(h);
+    for (const s of arr) {
+      const r = document.createElement('div'); r.className = 'data-row ow-row-click';
+      if (!s.is_active) r.style.opacity = '0.5';
+      const emoji = (OW_ROLE_META[s.role] || ['👤'])[0];
       r.innerHTML = `
+        <div class="ow-staff-av">${emoji}</div>
         <div class="grow">
-          <div class="data-name">${escapeHtml(name)}</div>
-          <div class="data-sub">${c.lawyer_staff_id ? 'юрист #' + c.lawyer_staff_id : '⚠ не назначен'} · ${c.message_count} сообщ. · ${fmtTime(c.updated_at)}</div>
+          <div class="data-name">${escapeHtml(s.full_name)}</div>
+          <div class="data-sub">@${escapeHtml(s.login)}${s.specialization ? ' · ' + escapeHtml(s.specialization) : ''} · ${s.is_online ? '🟢 онлайн' : '⚫ оффлайн'}${s.is_active ? '' : ' · отключён'}</div>
         </div>
-      `;
+        <svg class="ow-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`;
+      r.addEventListener('click', () => openOwStaff(s));
       wrap.appendChild(r);
     }
+  }
+}
+
+// Level 2 — chats of the selected staff member
+async function openOwStaff(s) {
+  if (!s) return;
+  OW_CURRENT_STAFF = s;
+  OW_CURRENT_CHAT_ID = null;
+  owShowLevel('chats');
+  $('owChatList').innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">Загрузка…</div>`;
+  try {
+    const data = await api('GET', `/api/owner/chats/by-staff/${s.id}`);
+    owRenderChats(data.chats || []);
   } catch (e) { showToast(e.message); }
+}
+
+function owRenderChats(chats) {
+  const wrap = $('owChatList');
+  if (!chats.length) { wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">У этого сотрудника пока нет чатов.</div>`; return; }
+  wrap.innerHTML = '';
+  for (const c of chats) {
+    const u = c.user || {};
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Клиент';
+    const r = document.createElement('div'); r.className = 'data-row ow-row-click';
+    r.innerHTML = `
+      <div class="grow">
+        <div class="data-name">${escapeHtml(name)}<span class="ow-type-tag ow-type-${c.chat_type}">${escapeHtml(c.type_label)}</span></div>
+        <div class="data-sub">${escapeHtml((c.last_message?.content || 'Нет сообщений').slice(0, 60))} · ${c.message_count} · ${fmtTime(c.updated_at)}</div>
+      </div>
+      <svg class="ow-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`;
+    r.addEventListener('click', () => openOwChat(c));
+    wrap.appendChild(r);
+  }
+}
+
+// Level 3 — full conversation, live
+async function openOwChat(c) {
+  OW_CURRENT_CHAT_ID = c.id;
+  owShowLevel('chat');
+  const u = c.user || {};
+  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Клиент';
+  const parts = [`👤 ${escapeHtml(name)}`];
+  if (c.lawyer_name) parts.push(`⚖️ ${escapeHtml(c.lawyer_name)}`);
+  if (c.manager_name) parts.push(`🧭 ${escapeHtml(c.manager_name)}`);
+  $('owChatHead').innerHTML = `<div class="ow-chat-head-title">${escapeHtml(c.type_label)}</div><div class="ow-chat-head-sub">${parts.join(' · ')}</div>`;
+  const wrap = $('owMessages');
+  wrap.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-secondary)">Загрузка…</div>`;
+  try {
+    const msgs = await api('GET', `/api/manager/chats/${c.id}/messages`);
+    wrap.innerHTML = '';
+    msgs.forEach(m => wrap.appendChild(owMessageEl(m)));
+    wrap.scrollTop = wrap.scrollHeight;
+  } catch (e) { showToast(e.message); }
+}
+
+function owAddMessageIfNew(m) {
+  if (m == null || m.id == null) return;
+  const wrap = $('owMessages'); if (!wrap || wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  const el = owMessageEl(m); el.classList.add('msg-new'); wrap.appendChild(el);
+  const dist = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
+  if (dist < 160) wrap.scrollTo({ top: wrap.scrollHeight, behavior: 'smooth' });
+}
+function owApplyEdit(m) {
+  const el = $('owMessages')?.querySelector(`[data-mid="${m.id}"]`);
+  if (el) el.replaceWith(owMessageEl(m));
 }
 
 // ── Broadcast ─────────────────────────────────
@@ -640,19 +786,19 @@ function connectWS() {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
       if (data.chat_id === CURRENT_SUPPORT_ID) addSupportMessageIfNew(data.chat_id, data);
+      if (data.chat_id === OW_CURRENT_CHAT_ID) owAddMessageIfNew(data);   // прямой эфир
       loadSupportChats();
     } else if (data.type === 'edit') {
-      const wrap = $(`scm-${data.chat_id}`);
-      const el = wrap?.querySelector(`[data-mid="${data.id}"]`);
-      if (el) el.replaceWith(supportMessageEl(data));
+      const sel = $(`scm-${data.chat_id}`)?.querySelector(`[data-mid="${data.id}"]`);
+      if (sel) sel.replaceWith(supportMessageEl(data));
+      if (data.chat_id === OW_CURRENT_CHAT_ID) owApplyEdit(data);
       loadSupportChats();
     } else if (data.type === 'delete') {
-      const el = document.querySelector(`[data-mid="${data.message_id}"]`);
-      if (el) {
+      document.querySelectorAll(`[data-mid="${data.message_id}"]`).forEach(el => {
         const b = el.querySelector('.msg-bubble');
         if (b) { b.textContent = 'Сообщение удалено'; b.style.opacity = '0.55'; b.style.fontStyle = 'italic'; }
         el.querySelector('.msg-time')?.remove();
-      }
+      });
       loadSupportChats();
     }
   };

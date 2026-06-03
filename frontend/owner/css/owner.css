@@ -127,3 +127,128 @@
 }
 .hbar-val { font-size: 13px; font-weight: 700; white-space: nowrap; }
 .hbar-pct { font-size: 11px; color: var(--text-tertiary); font-weight: 500; }
+
+/* ─────────────────────────────────────────────────────────────
+   Chats oversight (Сотрудники → их чаты → переписка live)
+   ───────────────────────────────────────────────────────────── */
+.ow-bc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin-bottom: 14px;
+  min-height: 22px;
+}
+.ow-bc-back {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--accent-hover);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+.ow-bc-back:hover { border-color: var(--border-hover); }
+.ow-bc-sep { color: var(--text-tertiary); }
+.ow-bc-cur { font-weight: 700; }
+.ow-bc-hint { color: var(--text-tertiary); font-weight: 400; }
+.ow-live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ow-live::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.6);
+  animation: ow-live-pulse 1.6s ease-out infinite;
+}
+@keyframes ow-live-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(52, 199, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+}
+
+.ow-cat-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--accent-hover);
+  margin: 14px 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ow-cat-title:first-child { margin-top: 0; }
+.ow-cat-count {
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+.ow-staff-av {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ow-row-click { cursor: pointer; }
+.ow-row-click:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }
+.ow-chevron { color: var(--text-tertiary); flex-shrink: 0; }
+
+.ow-type-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  vertical-align: middle;
+  margin-left: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+.ow-type-lawyer  { background: rgba(96, 165, 250, 0.18); color: #93c5fd; }
+.ow-type-match   { background: rgba(52, 199, 89, 0.18);  color: #86efac; }
+.ow-type-group   { background: rgba(244, 114, 182, 0.18); color: #f9a8d4; }
+.ow-type-support { background: rgba(251, 191, 36, 0.18); color: #fcd34d; }
+
+/* Conversation view */
+.ow-chatview { display: flex; flex-direction: column; }
+.ow-chat-head {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.ow-chat-head-title { font-size: 14px; font-weight: 700; }
+.ow-chat-head-sub { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+.ow-messages {
+  height: calc(100dvh - 250px);
+  min-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
+}
+.ow-messages .msg-wrap.msg-new { animation: msg-pop 260ms cubic-bezier(0.34,1.4,0.5,1); }
+@keyframes msg-pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
