@@ -5,8 +5,9 @@ let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
 let ME = null;
 let RESET_STAFF_ID = null;
 let WS = null;
-let SUPPORT_CHATS = [];
+let SUPPORT_USERS = [];
 let CURRENT_SUPPORT_ID = null;
+let CURRENT_SUPPORT_USER = null;
 let OW_CURRENT_STAFF = null;
 let OW_CURRENT_CHAT_ID = null;
 let _owReloadChats = null;   // reopens the level-2 list (staff chats or AI chats)
@@ -100,7 +101,7 @@ document.querySelectorAll('.app-tab').forEach(btn => {
     $('tab-' + btn.dataset.tab).classList.add('active');
     const map = {
       stats: loadStats, users: loadUsers, staff: loadStaff,
-      chats: loadAllChats, support: loadSupportChats, broadcast: loadBroadcasts,
+      chats: loadAllChats, support: openSupportTab, broadcast: loadBroadcasts,
       channels: loadChannels, settings: loadSettings,
     };
     if (map[btn.dataset.tab]) map[btn.dataset.tab]();
@@ -702,91 +703,137 @@ $('settingSubEnabled').addEventListener('change', async (e) => {
   } catch (err) { showToast(err.message); }
 });
 
-// ── Support chats (прямой чат пользователя с владельцем) ───────────────
+// ── Support (как у юриста: список всех пользователей → чат) ────────────
+const SUP_GRADIENTS = [
+  'linear-gradient(135deg,#6366f1,#4338ca)', 'linear-gradient(135deg,#ec4899,#be185d)',
+  'linear-gradient(135deg,#06b6d4,#0e7490)', 'linear-gradient(135deg,#8b5cf6,#6d28d9)',
+  'linear-gradient(135deg,#14b8a6,#0f766e)', 'linear-gradient(135deg,#f59e0b,#b45309)',
+  'linear-gradient(135deg,#ef4444,#b91c1c)', 'linear-gradient(135deg,#84cc16,#4d7c0f)',
+];
+function supInitials(name) {
+  const p = String(name || '').trim().split(/\s+/);
+  return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || '?';
+}
+function supColor(name) {
+  const s = String(name || ''); let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 8;
+}
+function supTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), now = new Date(), sec = Math.floor((now - d) / 1000);
+  if (sec < 60) return 'только что';
+  if (sec < 3600) return `${Math.floor(sec / 60)} мин`;
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+function showSupportLevel(level) {
+  $('supListView').classList.toggle('hidden', level !== 'list');
+  $('supChatView').classList.toggle('hidden', level !== 'chat');
+  if (level === 'list') { CURRENT_SUPPORT_ID = null; CURRENT_SUPPORT_USER = null; }
+}
+
+function openSupportTab() {
+  showSupportLevel('list');
+  loadSupportChats();
+}
+
+// Только данные + список (НЕ меняет уровень — вызывается и из WS).
 async function loadSupportChats() {
-  try { SUPPORT_CHATS = await api('GET', '/api/owner/support-chats'); renderSupportList(); }
+  try { SUPPORT_USERS = await api('GET', '/api/owner/support-users'); renderSupportUsers(); }
   catch (e) { showToast(e.message); }
 }
 
-function renderSupportList() {
-  const wrap = $('supportList');
-  if (!SUPPORT_CHATS.length) {
-    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Обращений в поддержку пока нет.</div>`;
+function renderSupportUsers() {
+  const wrap = $('supList');
+  if (!SUPPORT_USERS.length) {
+    wrap.innerHTML = `<div style="padding:24px;color:var(--text-secondary);text-align:center;font-size:13px">Пользователей пока нет.</div>`;
     return;
   }
+  const withMsgs = SUPPORT_USERS.filter(u => u.message_count > 0).length;
+  $('supMeta').innerHTML = `Нажмите на пользователя, чтобы открыть чат поддержки.` +
+    (withMsgs ? ` <span style="color:var(--accent-hover)">· ${withMsgs} с перепиской</span>` : '');
   wrap.innerHTML = '';
-  for (const chat of SUPPORT_CHATS) {
+  SUPPORT_USERS.forEach((u, i) => {
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${u.user_id}`;
+    const last = u.last_message;
+    const preview = (last?.content || last?.caption) || (u.message_count ? '[вложение]' : 'Нет сообщений');
+    const time = supTime(last?.created_at || u.updated_at || u.created_at);
     const item = document.createElement('div');
-    item.className = 'chat-list-item';
-    if (chat.id === CURRENT_SUPPORT_ID) item.classList.add('active');
-    const u = chat.user || {};
-    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
+    item.className = 'lawyer-chat-item' + (u.chat_id && u.chat_id === CURRENT_SUPPORT_ID ? ' active' : '');
+    item.style.setProperty('--item-delay', `${Math.min(i * 35, 300)}ms`);
+    const color = supColor(name);
     item.innerHTML = `
-      <div class="chat-item-name">${escapeHtml(name)}</div>
-      <div class="chat-item-preview">${escapeHtml(chat.last_message?.content || 'Нет сообщений')}</div>
-      <div class="chat-item-meta">${chat.message_count} сообщ. · ${fmtTime(chat.updated_at)}</div>`;
-    item.addEventListener('click', () => openSupportChat(chat));
+      <div class="lawyer-chat-item-avatar" data-color="${color}">${
+        u.photo_url ? `<img src="${escapeHtml(u.photo_url)}" alt=""/>` : escapeHtml(supInitials(name))
+      }</div>
+      <div class="lawyer-chat-item-body">
+        <div class="lawyer-chat-item-top">
+          <div class="lawyer-chat-item-name">${escapeHtml(name)}</div>
+          <div class="lawyer-chat-item-time">${escapeHtml(time)}</div>
+        </div>
+        <div class="lawyer-chat-item-preview">${escapeHtml(preview)}</div>
+        <div class="lawyer-chat-item-badges">
+          ${u.message_count > 0 ? `<span class="lawyer-badge count">${u.message_count} сообщ.</span>` : `<span class="lawyer-badge free">🆕 новый</span>`}
+          ${u.username ? `<span class="lawyer-badge count">@${escapeHtml(u.username)}</span>` : ''}
+        </div>
+      </div>`;
+    item.addEventListener('click', () => openSupportChat(u));
     wrap.appendChild(item);
-  }
+  });
 }
 
-async function openSupportChat(chat) {
-  CURRENT_SUPPORT_ID = chat.id;
-  renderSupportList();
-  const u = chat.user || {};
-  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `User #${chat.user_id}`;
-  const detail = $('supportDetail');
-  detail.innerHTML = `
-    <div class="chat-header-bar" style="display:flex;align-items:center">
-      <div style="flex:1">
-        <div class="chat-header-name">${escapeHtml(name)}</div>
-        <div class="chat-header-meta">${u.username ? '@' + escapeHtml(u.username) : ''} · TG ${u.telegram_id || '—'}</div>
-      </div>
-    </div>
-    <div class="chat-messages" id="scm-${chat.id}"></div>
-    <div class="chat-reply-area">
-      <textarea class="chat-reply-input" id="sri-${chat.id}" rows="1" placeholder="Ответ пользователю..."></textarea>
-      <button class="chat-reply-send" id="srb-${chat.id}">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
-        </svg>
-      </button>
-    </div>`;
+async function openSupportChat(u) {
+  CURRENT_SUPPORT_USER = u;
+  let chatId = u.chat_id;
+  if (!chatId) {
+    try { const r = await api('POST', '/api/owner/support/open', { user_id: u.user_id }); chatId = r.chat_id; u.chat_id = chatId; }
+    catch (e) { showToast(e.message); return; }
+  }
+  CURRENT_SUPPORT_ID = chatId;
+  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${u.user_id}`;
+  $('supChatName').textContent = name;
+  $('supReplyInput').value = '';
+  showSupportLevel('chat');
+  const wrap = $('supMessages');
+  wrap.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-secondary)">Загрузка…</div>`;
   try {
-    const msgs = await api('GET', `/api/manager/chats/${chat.id}/messages`);
-    const wrap = $(`scm-${chat.id}`);
+    const msgs = await api('GET', `/api/manager/chats/${chatId}/messages`);
+    wrap.innerHTML = '';
     msgs.forEach(m => wrap.appendChild(supportMessageEl(m)));
     wrap.scrollTop = wrap.scrollHeight;
   } catch (e) { showToast(e.message); }
-
-  $(`sri-${chat.id}`).addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendSupportReply(chat.id); }
-  });
-  $(`srb-${chat.id}`).addEventListener('click', () => sendSupportReply(chat.id));
+  if (window.innerWidth >= 900) setTimeout(() => $('supReplyInput').focus(), 50);
 }
 
-async function sendSupportReply(chatId) {
-  const input = $(`sri-${chatId}`);
-  if (!input) return;
+async function sendSupportReply() {
+  const input = $('supReplyInput');
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || !CURRENT_SUPPORT_ID) return;
   input.value = '';
   try {
     // ManagerDep допускает роль owner — отправляем как сотрудник.
-    const m = await api('POST', `/api/manager/chats/${chatId}/messages`, { content: text });
-    addSupportMessageIfNew(chatId, m);
+    const m = await api('POST', `/api/manager/chats/${CURRENT_SUPPORT_ID}/messages`, { content: text });
+    supAddMessageIfNew(m);
     loadSupportChats();
   } catch (e) { showToast(e.message); }
 }
 
-function addSupportMessageIfNew(chatId, m) {
+function supAddMessageIfNew(m) {
   if (m == null || m.id == null) return;
-  const wrap = $(`scm-${chatId}`);
-  if (!wrap) return;
-  if (wrap.querySelector(`[data-mid="${m.id}"]`)) return;
-  wrap.appendChild(supportMessageEl(m));
-  wrap.scrollTop = wrap.scrollHeight;
+  const wrap = $('supMessages');
+  if (!wrap || wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  const el = supportMessageEl(m); el.classList.add('msg-new'); wrap.appendChild(el);
+  const dist = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
+  if (dist < 160) wrap.scrollTo({ top: wrap.scrollHeight, behavior: 'smooth' });
 }
+
+$('supBack').addEventListener('click', () => { showSupportLevel('list'); renderSupportUsers(); });
+$('supReplyBtn').addEventListener('click', sendSupportReply);
+$('supReplyInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendSupportReply(); }
+});
 
 function supportMessageEl(m) {
   const w = document.createElement('div');
@@ -820,12 +867,14 @@ function connectWS() {
   WS.onmessage = (e) => {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
-      if (data.chat_id === CURRENT_SUPPORT_ID) addSupportMessageIfNew(data.chat_id, data);
-      if (data.chat_id === OW_CURRENT_CHAT_ID) owAddMessageIfNew(data);   // прямой эфир
+      if (data.chat_id === CURRENT_SUPPORT_ID) supAddMessageIfNew(data);   // поддержка live
+      if (data.chat_id === OW_CURRENT_CHAT_ID) owAddMessageIfNew(data);    // обзор чатов live
       loadSupportChats();
     } else if (data.type === 'edit') {
-      const sel = $(`scm-${data.chat_id}`)?.querySelector(`[data-mid="${data.id}"]`);
-      if (sel) sel.replaceWith(supportMessageEl(data));
+      if (data.chat_id === CURRENT_SUPPORT_ID) {
+        const sel = $('supMessages')?.querySelector(`[data-mid="${data.id}"]`);
+        if (sel) sel.replaceWith(supportMessageEl(data));
+      }
       if (data.chat_id === OW_CURRENT_CHAT_ID) owApplyEdit(data);
       loadSupportChats();
     } else if (data.type === 'delete') {
