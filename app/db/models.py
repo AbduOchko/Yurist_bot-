@@ -113,6 +113,7 @@ class Message(Base):
     sender_id = Column(BigInteger, nullable=True)
     sender_name = Column(String(255), nullable=True)
     content = Column(Text, nullable=True)
+    caption = Column(Text, nullable=True)  # подпись к медиа (фото/видео/голос/файл)
     message_type = Column(Enum(MessageType), default=MessageType.text)
     file_url = Column(Text, nullable=True)
     file_name = Column(String(500), nullable=True)

@@ -587,10 +587,11 @@ function messageEl(m, opts = {}) {
   b.className = 'msg-bubble';
   if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
     b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
-    if (m.content) {
+    const _cap = m.caption || (m.message_type === 'image' ? m.content : null);
+    if (_cap) {
       const c = document.createElement('div');
       c.style.marginTop = '4px';
-      c.textContent = m.content;
+      c.textContent = _cap;
       b.appendChild(c);
     }
   } else {

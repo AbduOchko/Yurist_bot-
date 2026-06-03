@@ -28,6 +28,7 @@ def serialize_message(m) -> dict:
         "sender_type": m.sender_type,
         "sender_name": m.sender_name,
         "content": m.content,
+        "caption": m.caption,
         "message_type": m.message_type,
         "file_url": m.file_url,
         "file_name": m.file_name,
@@ -60,6 +61,7 @@ class MessageIn(BaseModel):
     sender_id: Optional[int] = None
     sender_name: Optional[str] = None
     content: Optional[str] = None
+    caption: Optional[str] = None
     message_type: MessageType = MessageType.text
     file_url: Optional[str] = None
     file_name: Optional[str] = None
@@ -79,6 +81,7 @@ async def send_message(
         chat_id=data.chat_id,
         sender_type=data.sender_type,
         content=data.content,
+        caption=data.caption,
         message_type=data.message_type,
         file_url=data.file_url,
         file_name=data.file_name,

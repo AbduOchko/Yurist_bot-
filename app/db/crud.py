@@ -99,6 +99,7 @@ async def create_message(
     sender_id: Optional[int] = None,
     sender_name: Optional[str] = None,
     forwarded_from_chat_type: Optional[ChatType] = None,
+    caption: Optional[str] = None,
 ) -> Message:
     msg = Message(
         chat_id=chat_id,
@@ -106,6 +107,7 @@ async def create_message(
         sender_id=sender_id,
         sender_name=sender_name,
         content=content,
+        caption=caption,
         message_type=message_type,
         file_url=file_url,
         file_name=file_name,

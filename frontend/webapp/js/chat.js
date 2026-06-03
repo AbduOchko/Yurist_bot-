@@ -91,6 +91,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let pinnedMessages = [];
+let pendingMedia = null;   // { msgType, dataUrl, fileName, fileSize, durationSec? } — медиа, ожидающее подписи
 
 // ── DOM refs ─────────────────────────────────
 const $title     = document.getElementById('chatTitle');
@@ -118,6 +119,10 @@ const $fwdCancel = document.getElementById('forwardCancel');
 const $imgViewer = document.getElementById('imageViewer');
 const $imgViewerImg  = document.getElementById('imageViewerImg');
 const $imgViewerClose= document.getElementById('imageViewerClose');
+const $mediaPreview      = document.getElementById('mediaPreview');
+const $mediaPreviewThumb = document.getElementById('mediaPreviewThumb');
+const $mediaPreviewTitle = document.getElementById('mediaPreviewTitle');
+const $mediaPreviewClose = document.getElementById('mediaPreviewClose');
 
 // ── Init ─────────────────────────────────────
 async function init() {
@@ -488,15 +493,24 @@ function renderContent(msg, isUser) {
     frag.appendChild(span);
   }
 
-  // Show caption only for media that has real text (not voice duration)
-  if (msg.content && msg.message_type !== 'text' && msg.message_type !== 'system' && msg.message_type !== 'voice') {
+  // Caption under any media (фото/видео/голос/файл)
+  const capText = mediaCaption(msg);
+  if (capText && msg.message_type !== 'text' && msg.message_type !== 'system') {
     const cap = document.createElement('div');
-    cap.style.cssText = 'margin-top:6px;font-size:14px;';
-    cap.textContent = msg.content;
+    cap.style.cssText = 'margin-top:6px;font-size:14px;white-space:pre-wrap;';
+    cap.textContent = capText;
     frag.appendChild(cap);
   }
 
   return frag;
+}
+
+// Caption for a media message: prefer the dedicated field; fall back to legacy
+// image captions that used to live in `content`.
+function mediaCaption(msg) {
+  if (msg.caption) return msg.caption;
+  if (msg.message_type === 'image' && msg.content) return msg.content;
+  return null;
 }
 
 // Global registry of active voice players
@@ -728,13 +742,11 @@ function showTypingIndicator() {
 
 // ── Send message ──────────────────────────────
 async function sendMessage() {
-  const text = $input.value.trim();
-  if (!text && !editingMessageId) return;
+  if (editingMessageId) { await submitEdit($input.value.trim()); return; }
+  if (pendingMedia) { await sendPendingMedia($input.value.trim()); return; }
 
-  if (editingMessageId) {
-    await submitEdit(text);
-    return;
-  }
+  const text = $input.value.trim();
+  if (!text) return;
 
   $input.value = '';
   autoResize();
@@ -1045,29 +1057,73 @@ function getMimeType(file) {
   return 'document';
 }
 
-async function uploadAndSend(file) {
-  showToast('Отправка...');
+// Stage a picked file as a pending attachment (with optional caption) — does
+// NOT send yet; the user can add a caption and press send.
+async function stagePendingFile(file) {
+  showToast('Обработка…');
+  let dataUrl, msgType;
   try {
-    let dataUrl, msgType;
+    if (file.type.startsWith('image/')) { dataUrl = await compressImage(file); msgType = 'image'; }
+    else if (file.type.startsWith('video/')) { dataUrl = await blobToDataUrl(file); msgType = 'video'; }
+    else if (file.type.startsWith('audio/')) { dataUrl = await blobToDataUrl(file); msgType = 'audio'; }
+    else { dataUrl = await blobToDataUrl(file); msgType = 'document'; }
+  } catch { dataUrl = null; }
+  if (!dataUrl) { showToast('Не удалось обработать файл'); return; }
+  pendingMedia = { msgType, dataUrl, fileName: file.name || 'file', fileSize: file.size };
+  showMediaPreview();
+}
 
-    if (file.type.startsWith('image/')) {
-      dataUrl = await compressImage(file);
-      msgType = 'image';
-    } else if (file.type.startsWith('video/')) {
-      dataUrl = await blobToDataUrl(file);
-      msgType = 'video';
-    } else if (file.type.startsWith('audio/')) {
-      dataUrl = await blobToDataUrl(file);
-      msgType = 'audio';
-    } else {
-      dataUrl = await blobToDataUrl(file);
-      msgType = 'document';
-    }
+// Stage a recorded voice note as a pending attachment.
+async function stagePendingVoice(blob, durationSec) {
+  let dataUrl;
+  try { dataUrl = await blobToDataUrl(blob); } catch { dataUrl = null; }
+  if (!dataUrl) { showToast('Ошибка записи'); return; }
+  pendingMedia = { msgType: 'voice', dataUrl, fileName: `voice_${Date.now()}`, fileSize: blob.size, durationSec };
+  showMediaPreview();
+}
 
-    if (!dataUrl) { showToast('Не удалось обработать файл'); return; }
+function showMediaPreview() {
+  if (!pendingMedia) return;
+  const pm = pendingMedia;
+  let thumb, title;
+  if (pm.msgType === 'image')      { thumb = `<img src="${pm.dataUrl}" alt=""/>`; title = 'Фото'; }
+  else if (pm.msgType === 'voice') { thumb = '🎤'; title = `Голосовое · ${formatDuration(pm.durationSec || 0)}`; }
+  else if (pm.msgType === 'video') { thumb = '🎞'; title = 'Видео'; }
+  else if (pm.msgType === 'audio') { thumb = '🎵'; title = 'Аудио'; }
+  else                             { thumb = '📄'; title = truncate(pm.fileName || 'Файл', 28); }
+  $mediaPreviewThumb.innerHTML = thumb;
+  $mediaPreviewTitle.textContent = title;
+  $mediaPreview.classList.remove('hidden');
+  $input.placeholder = 'Добавьте подпись…';
+  $sendBtn.disabled = false;
+  $input.focus();
+}
 
-    // In AI chat: images go to AI for vision analysis
-    if (CHAT_TYPE === 'ai' && msgType === 'image') {
+function hideMediaPreview() {
+  $mediaPreview.classList.add('hidden');
+  $input.placeholder = 'Сообщение...';
+}
+
+function cancelPendingMedia() {
+  pendingMedia = null;
+  hideMediaPreview();
+  $sendBtn.disabled = !$input.value.trim() && !editingMessageId;
+}
+
+// Send the staged attachment together with the caption — as ONE message.
+async function sendPendingMedia(caption) {
+  const pm = pendingMedia;
+  if (!pm) return;
+  pendingMedia = null;
+  hideMediaPreview();
+  $input.value = '';
+  autoResize();
+  $sendBtn.disabled = true;
+  const cap = (caption || '').trim() || null;
+
+  try {
+    // AI chat: image → vision, voice → (caption answered or canned reply).
+    if (CHAT_TYPE === 'ai' && (pm.msgType === 'image' || pm.msgType === 'voice')) {
       showAITyping();
       const res = await fetch('/api/ai/media', {
         method: 'POST',
@@ -1075,16 +1131,15 @@ async function uploadAndSend(file) {
         body: JSON.stringify({
           chat_id: CHAT_ID,
           user_id: USER_ID_INT,
-          message_type: 'image',
-          file_url: dataUrl,
-          file_name: file.name || 'image',
-          file_size: file.size,
+          message_type: pm.msgType,
+          file_url: pm.dataUrl,
+          file_name: pm.fileName,
+          file_size: pm.fileSize,
+          caption: cap,
+          duration: pm.durationSec || null,
         }),
       });
-      if (!res.ok) {
-        $list.querySelector('.typing-indicator')?.remove();
-        showToast('Ошибка анализа изображения');
-      }
+      if (!res.ok) { $list.querySelector('.typing-indicator')?.remove(); showToast('Ошибка отправки'); }
       return;
     }
 
@@ -1093,10 +1148,12 @@ async function uploadAndSend(file) {
       sender_type: 'user',
       sender_id: USER_ID_INT,
       sender_name: USER.first_name || 'Пользователь',
-      message_type: msgType,
-      file_url: dataUrl,
-      file_name: file.name || 'file',
-      file_size: file.size,
+      message_type: pm.msgType,
+      content: pm.msgType === 'voice' ? String(pm.durationSec || 0) : null,
+      caption: cap,
+      file_url: pm.dataUrl,
+      file_name: pm.fileName,
+      file_size: pm.fileSize,
       reply_to_id: replyToMessage?.id || null,
     });
     clearReply();
@@ -1203,46 +1260,8 @@ async function startRecording() {
         return;
       }
 
-      try {
-        const dataUrl = await blobToDataUrl(blob);
-
-        // ИИ-чат на базе GigaChat не принимает аудио напрямую — отправляем
-        // голосовое как есть; бэкенд сохранит его и попросит написать текстом.
-        if (CHAT_TYPE === 'ai') {
-          showAITyping();
-          const res = await fetch('/api/ai/media', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: CHAT_ID,
-              user_id: USER_ID_INT,
-              message_type: 'voice',
-              file_url: dataUrl,
-              file_name: `voice_${Date.now()}`,
-              file_size: blob.size,
-              duration: durationSec,
-            }),
-          });
-          if (!res.ok) {
-            $list.querySelector('.typing-indicator')?.remove();
-            showToast('Ошибка отправки голосового');
-          }
-          return;
-        }
-
-        await api('POST', '/api/messages/', {
-          chat_id: CHAT_ID,
-          sender_type: 'user',
-          sender_id: USER_ID_INT,
-          message_type: 'voice',
-          content: String(durationSec),  // duration for player display
-          file_url: dataUrl,
-          file_name: `voice_${Date.now()}`,
-          file_size: blob.size,
-        });
-      } catch {
-        showToast('Ошибка отправки голосового');
-      }
+      // Не отправляем сразу — показываем превью, чтобы можно было добавить подпись.
+      await stagePendingVoice(blob, durationSec);
     };
 
     mediaRecorder.start(100); // chunk every 100ms for reliability
@@ -1331,7 +1350,7 @@ $backBtn.addEventListener('click', () => {
 
 $input.addEventListener('input', () => {
   autoResize();
-  $sendBtn.disabled = !$input.value.trim() && !editingMessageId;
+  $sendBtn.disabled = !$input.value.trim() && !editingMessageId && !pendingMedia;
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'typing' }));
   }
@@ -1372,14 +1391,19 @@ document.getElementById('attachFile').addEventListener('click', () => {
 });
 
 document.getElementById('fileInputImage').addEventListener('change', (e) => {
-  if (e.target.files[0]) uploadAndSend(e.target.files[0]);
+  if (e.target.files[0]) stagePendingFile(e.target.files[0]);
+  e.target.value = '';
 });
 document.getElementById('fileInputAudio').addEventListener('change', (e) => {
-  if (e.target.files[0]) uploadAndSend(e.target.files[0], 'audio');
+  if (e.target.files[0]) stagePendingFile(e.target.files[0]);
+  e.target.value = '';
 });
 document.getElementById('fileInputFile').addEventListener('change', (e) => {
-  if (e.target.files[0]) uploadAndSend(e.target.files[0], 'document');
+  if (e.target.files[0]) stagePendingFile(e.target.files[0]);
+  e.target.value = '';
 });
+
+$mediaPreviewClose.addEventListener('click', cancelPendingMedia);
 
 // Voice recording — touch
 $voiceBtn.addEventListener('touchstart', (e) => {

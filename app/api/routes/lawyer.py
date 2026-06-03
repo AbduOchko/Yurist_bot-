@@ -56,6 +56,7 @@ def _serialize_message(m) -> dict:
         "sender_name": m.sender_name,
         "sender_id": m.sender_id,
         "content": m.content,
+        "caption": m.caption,
         "message_type": m.message_type.value if m.message_type else None,
         "file_url": m.file_url,
         "file_name": m.file_name,

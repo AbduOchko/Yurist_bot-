@@ -51,6 +51,9 @@ async def create_tables():
         await conn.execute(text(
             "ALTER TABLE messages ALTER COLUMN file_url TYPE TEXT;"
         ))
+        await conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS caption TEXT;"
+        ))
 
         # ── Chat → Staff FK for lawyer assignment ─────────────────────
         await conn.execute(text(

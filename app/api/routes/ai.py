@@ -222,8 +222,10 @@ async def ai_media(
 
     mtype = MessageType.image if data.message_type == "image" else MessageType.voice
 
-    # For voice, content holds duration (player convention); for image, the caption
-    stored_content = str(data.duration) if mtype == MessageType.voice and data.duration else data.caption
+    # Voice keeps the duration in `content` (player convention); the typed caption
+    # (if any) goes into the dedicated `caption` field for every media type.
+    stored_content = str(data.duration) if mtype == MessageType.voice and data.duration else None
+    caption = (data.caption or "").strip() or None
 
     # ── 1. Save & broadcast the user's media message ──
     user_msg = await crud.create_message(
@@ -231,6 +233,7 @@ async def ai_media(
         chat_id=data.chat_id,
         sender_type=SenderType.user,
         content=stored_content,
+        caption=caption,
         message_type=mtype,
         file_url=data.file_url,
         file_name=data.file_name,
@@ -243,6 +246,7 @@ async def ai_media(
         "chat_id": data.chat_id,
         "sender_type": "user",
         "content": stored_content,
+        "caption": caption,
         "message_type": data.message_type,
         "file_url": data.file_url,
         "file_name": data.file_name,
@@ -252,8 +256,19 @@ async def ai_media(
     await manager.broadcast_to_chat(data.chat_id, media_payload)
     await manager.broadcast_to_owners(media_payload)  # live oversight
 
-    # ── 2a. Voice: GigaChat не принимает аудио напрямую ──
+    # ── 2a. Voice ──
     if mtype == MessageType.voice:
+        # GigaChat can't hear audio. If the user added a text caption, answer it;
+        # otherwise ask them to write the question.
+        if caption:
+            chat = await crud.get_chat_by_id(session, data.chat_id)
+            after = chat.user_cleared_at if chat else None
+            history = await crud.get_messages(session, data.chat_id, limit=30, after=after)
+            history = [m for m in history if m.id != user_msg.id]
+            messages = build_messages(history)
+            messages.append({"role": "user", "content": caption})
+            ai_msg = await _stream_and_save(session, data.chat_id, messages)
+            return {"ok": bool(ai_msg)}
         await _ai_say(
             session,
             data.chat_id,

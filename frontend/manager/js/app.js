@@ -326,7 +326,7 @@ function messageEl(m, opts = {}) {
   const b = document.createElement('div'); b.className = 'msg-bubble';
   if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
     b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
-    if (m.content) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = m.content; b.appendChild(c); }
+    const _cap = m.caption || (m.message_type === 'image' ? m.content : null); if (_cap) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = _cap; b.appendChild(c); }
   } else {
     b.textContent = m.content || '';
   }
@@ -627,7 +627,7 @@ function groupMessageEl(m, opts = {}) {
   const b = document.createElement('div'); b.className = 'msg-bubble';
   if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
     b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
-    if (m.content) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = m.content; b.appendChild(c); }
+    const _cap = m.caption || (m.message_type === 'image' ? m.content : null); if (_cap) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = _cap; b.appendChild(c); }
   } else b.textContent = m.content || '';
   w.appendChild(b);
   if (m.created_at && m.sender_type !== 'system') { const t = document.createElement('div'); t.className = 'msg-time'; t.textContent = fmtMsgTime(m.created_at); w.appendChild(t); }
