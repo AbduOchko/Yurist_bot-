@@ -1824,3 +1824,46 @@ body {
   cursor: pointer;
 }
 .media-preview-close:active { transform: scale(0.9); }
+
+/* ─── CHAT ANIMATIONS ─── */
+/* Вход / выход из чата */
+@keyframes chatEnter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes chatLeave {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(12px); }
+}
+.chat-page { animation: chatEnter 300ms cubic-bezier(0.22, 1, 0.36, 1); }
+.chat-page.leaving { animation: chatLeave 200ms ease-in forwards; }
+
+/* Появление нового сообщения */
+@keyframes msgAppear {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.message-wrap.msg-appear { animation: msgAppear 280ms cubic-bezier(0.34, 1.4, 0.5, 1); }
+
+/* Вспышка при редактировании */
+@keyframes bubbleFlash {
+  0%   { box-shadow: 0 2px 8px rgba(0,0,0,0.3), 0 0 0 0 rgba(96, 165, 250, 0); }
+  30%  { box-shadow: 0 2px 8px rgba(0,0,0,0.3), 0 0 0 3px rgba(96, 165, 250, 0.5); }
+  100% { box-shadow: 0 2px 8px rgba(0,0,0,0.3), 0 0 0 0 rgba(96, 165, 250, 0); }
+}
+.bubble.flash { animation: bubbleFlash 700ms ease-out; }
+
+/* Удаление сообщения */
+@keyframes bubbleDelete {
+  0%   { transform: scale(1);    opacity: 1; }
+  45%  { transform: scale(0.9);  opacity: 0.45; }
+  100% { transform: scale(1);    opacity: 0.4; }
+}
+.bubble.deleting { animation: bubbleDelete 360ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-page,
+  .message-wrap.msg-appear,
+  .bubble.flash,
+  .bubble.deleting { animation: none !important; }
+}

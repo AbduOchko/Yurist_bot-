@@ -22,7 +22,14 @@ if (tg) {
   try { tg.setHeaderColor('#0a1024'); } catch(e) {}
   try { tg.setBackgroundColor('#0a1024'); } catch(e) {}
   tg.BackButton.show();
-  tg.BackButton.onClick(() => { window.location.href = '/'; });
+  tg.BackButton.onClick(() => leaveChat());
+}
+
+// Плавный выход из чата
+function leaveChat() {
+  const page = document.querySelector('.chat-page');
+  if (page) page.classList.add('leaving');
+  setTimeout(() => { window.location.href = '/'; }, 190);
 }
 
 // Guard: redirect to main page if no auth token
@@ -678,7 +685,9 @@ function appendMessage(msg) {
   const lastDate = lastWrap ? new Date(messages.find(m => String(m.id) === lastWrap.dataset.id)?.created_at || 0).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : null;
   const thisDate = new Date(msg.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
   if (thisDate !== lastDate) $list.appendChild(createDateSep(thisDate));
-  $list.appendChild(createMessageEl(msg));
+  const el = createMessageEl(msg);
+  el.classList.add('msg-appear');          // плавное появление нового сообщения
+  $list.appendChild(el);
 }
 
 // ── AI Streaming ──────────────────────────────
@@ -858,8 +867,9 @@ function markDeleted(msgId) {
   if (wrap) {
     const bubble = wrap.querySelector('.bubble');
     if (bubble) {
-      bubble.className = 'bubble deleted';
+      bubble.className = 'bubble deleted deleting';   // анимация исчезновения
       bubble.textContent = 'Сообщение удалено';
+      setTimeout(() => bubble.classList.remove('deleting'), 400);
     }
   }
   const idx = messages.findIndex(m => m.id === msgId);
@@ -911,6 +921,11 @@ function updateMessage(data) {
     if (bubble) {
       const txtSpan = bubble.querySelector('span');
       if (txtSpan) txtSpan.textContent = data.content;
+      // вспышка при редактировании
+      bubble.classList.remove('flash');
+      void bubble.offsetWidth;
+      bubble.classList.add('flash');
+      setTimeout(() => bubble.classList.remove('flash'), 700);
     }
     // Update meta
     const meta = wrap.querySelector('.message-meta');
@@ -1344,9 +1359,7 @@ function autoResize() {
 }
 
 // ── Event listeners ───────────────────────────
-$backBtn.addEventListener('click', () => {
-  window.location.href = '/';
-});
+$backBtn.addEventListener('click', () => leaveChat());
 
 $input.addEventListener('input', () => {
   autoResize();
