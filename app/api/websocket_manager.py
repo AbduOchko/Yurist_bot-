@@ -23,7 +23,7 @@ class ConnectionManager:
         # End-user-side: chat_id → connections
         self.chat_connections: Dict[int, List[WebSocket]] = defaultdict(list)
         # Staff pools
-        self.manager_connections: List[WebSocket] = []
+        self.manager_connections: Dict[int, List[WebSocket]] = defaultdict(list)
         self.lawyer_connections: Dict[int, List[WebSocket]] = defaultdict(list)
         self.owner_connections: List[WebSocket] = []
 
@@ -53,13 +53,14 @@ class ConnectionManager:
         await websocket.send_text(message)
 
     # ── Staff-side ─────────────────────────────────────────────────
-    async def connect_manager(self, websocket: WebSocket):
+    async def connect_manager(self, websocket: WebSocket, staff_id: int):
         await websocket.accept()
-        self.manager_connections.append(websocket)
+        self.manager_connections[staff_id].append(websocket)
 
-    def disconnect_manager(self, websocket: WebSocket):
-        if websocket in self.manager_connections:
-            self.manager_connections.remove(websocket)
+    def disconnect_manager(self, websocket: WebSocket, staff_id: int):
+        bucket = self.manager_connections.get(staff_id, [])
+        if websocket in bucket:
+            bucket.remove(websocket)
 
     async def connect_lawyer(self, websocket: WebSocket, staff_id: int):
         await websocket.accept()
@@ -93,7 +94,12 @@ class ConnectionManager:
                 pool.remove(ws)
 
     async def broadcast_to_managers(self, data: Any):
-        await self._broadcast_list(self.manager_connections, data)
+        """Fan out to every connected manager."""
+        for pool in list(self.manager_connections.values()):
+            await self._broadcast_list(pool, data)
+
+    async def broadcast_to_manager(self, staff_id: int, data: Any):
+        await self._broadcast_list(self.manager_connections.get(staff_id, []), data)
 
     async def broadcast_to_owners(self, data: Any):
         await self._broadcast_list(self.owner_connections, data)
@@ -118,6 +124,12 @@ class ConnectionManager:
                 # Free pool: every lawyer + managers (for assignment override)
                 await self.broadcast_to_managers(data)
                 await self.broadcast_to_all_lawyers(data)
+        elif chat.chat_type == ChatType.group:
+            # Group: the assigned lawyer + the group's manager (+ owners above).
+            if chat.lawyer_staff_id:
+                await self.broadcast_to_lawyer(chat.lawyer_staff_id, data)
+            if chat.manager_staff_id:
+                await self.broadcast_to_manager(chat.manager_staff_id, data)
         # AI chats: don't broadcast to staff
 
 

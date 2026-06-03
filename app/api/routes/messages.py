@@ -97,7 +97,7 @@ async def send_message(
 
     # Notify staff (manager / lawyer / owner) for non-AI chats
     chat = await crud.get_chat_by_id(session, data.chat_id)
-    if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support):
+    if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support, ChatType.group):
         await manager.broadcast_to_staff_for_chat(chat, {
             "type": "new_message",
             "chat_id": data.chat_id,
@@ -128,7 +128,7 @@ async def edit_message(
     # Mirror the edit to staff panels (lawyer / manager / owner) so the other
     # side sees the change live instead of only after re-opening the chat.
     chat = await crud.get_chat_by_id(session, msg.chat_id)
-    if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support):
+    if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support, ChatType.group):
         await manager.broadcast_to_staff_for_chat(chat, event)
     return payload
 
@@ -149,7 +149,7 @@ async def delete_message(message_id: int, session: AsyncSession = Depends(get_se
         await manager.broadcast_to_chat(chat_id, event)
         # Mirror deletion to staff panels so the other side sees it live.
         chat = await crud.get_chat_by_id(session, chat_id)
-        if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support):
+        if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support, ChatType.group):
             await manager.broadcast_to_staff_for_chat(chat, event)
     return {"ok": ok}
 

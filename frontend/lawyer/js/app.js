@@ -6,7 +6,10 @@ const TOKEN_KEY = 'yurist_lawyer_token';
 let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
 let ME = null;
 let CHATS = [];
+let GROUPS = [];
+let LIST_MODE = 'personal';      // 'personal' | 'group'
 let CURRENT_CHAT_ID = null;
+let CURRENT_IS_GROUP = false;    // is the currently open chat a group?
 let WS = null;
 
 // NB: `tg` is already declared as a global `const` in the <head> inline script
@@ -16,6 +19,25 @@ let WS = null;
 // kill the entire file (no event listeners attached). We just reuse the
 // global.
 const $ = (id) => document.getElementById(id);
+
+const AVATAR_GRADIENTS = [
+  'linear-gradient(135deg,#6366f1,#4338ca)', 'linear-gradient(135deg,#ec4899,#be185d)',
+  'linear-gradient(135deg,#06b6d4,#0e7490)', 'linear-gradient(135deg,#8b5cf6,#6d28d9)',
+  'linear-gradient(135deg,#14b8a6,#0f766e)', 'linear-gradient(135deg,#f59e0b,#b45309)',
+  'linear-gradient(135deg,#ef4444,#b91c1c)', 'linear-gradient(135deg,#84cc16,#4d7c0f)',
+];
+
+// Подписи участников группового чата — «кто пишет».
+function grpRoleLabel(t, name) {
+  if (t === 'lawyer')  return `⚖️ ${name || 'Юрист'}`;
+  if (t === 'manager') return `🧭 ${name || 'Менеджер'}`;
+  return `👤 ${name || 'Клиент'}`;
+}
+function grpRoleColor(t) {
+  if (t === 'lawyer')  return '#60a5fa';
+  if (t === 'manager') return '#fbbf24';
+  return '#a78bfa';
+}
 
 // ── Utils ─────────────────────────────────────
 function escapeHtml(s) {
@@ -244,6 +266,7 @@ function enterApp() {
   $('onlineLabel').textContent = ME.is_online ? 'Онлайн' : 'Оффлайн';
 
   loadChats();
+  loadGroups();
   connectWS();
 }
 
@@ -282,10 +305,65 @@ $('backBtn').addEventListener('click', () => { haptic('light'); showView('list')
 async function loadChats() {
   try {
     CHATS = await api('GET', '/api/lawyer/chats');
-    renderChats();
-    updateEmptyHint();
+    if (LIST_MODE === 'personal') { renderChats(); updateEmptyHint(); }
   } catch (e) { showToast(e.message); }
 }
+
+async function loadGroups() {
+  try {
+    GROUPS = await api('GET', '/api/lawyer/groups');
+    if (LIST_MODE === 'group') renderGroups();
+  } catch (e) { showToast(e.message); }
+}
+
+function renderGroups() {
+  const wrap = $('chatList'), meta = $('listMeta');
+  if (!GROUPS.length) {
+    meta.textContent = 'Групповых чатов нет';
+    wrap.innerHTML = `<div class="lawyer-list-empty"><div class="lawyer-list-empty-icon">👥</div><div class="lawyer-list-empty-title">Групп пока нет</div><div class="lawyer-list-empty-text">Когда менеджер создаст общий чат с вашим участием — он появится здесь.</div></div>`;
+    return;
+  }
+  meta.innerHTML = `<strong>${GROUPS.length}</strong> ${pluralRu(GROUPS.length, 'групповой чат', 'групповых чата', 'групповых чатов')}`;
+  wrap.innerHTML = '';
+  GROUPS.forEach((g, i) => {
+    const u = g.user || {};
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${g.user_id}`;
+    const last = g.last_message;
+    const preview = last?.content || 'Нет сообщений';
+    const time = smartTime(last?.created_at || g.updated_at);
+    const item = document.createElement('div');
+    item.className = 'lawyer-chat-item' + (g.id === CURRENT_CHAT_ID ? ' active' : '');
+    item.dataset.id = g.id;
+    item.style.setProperty('--item-delay', `${Math.min(i * 40, 320)}ms`);
+    item.innerHTML = `
+      <div class="lawyer-chat-item-avatar" style="background:linear-gradient(135deg,#2563eb,#1e3a8a)">👥</div>
+      <div class="lawyer-chat-item-body">
+        <div class="lawyer-chat-item-top">
+          <div class="lawyer-chat-item-name">Общий чат · ${escapeHtml(name)}</div>
+          <div class="lawyer-chat-item-time">${escapeHtml(time)}</div>
+        </div>
+        <div class="lawyer-chat-item-preview">${escapeHtml(preview)}</div>
+        <div class="lawyer-chat-item-badges">
+          <span class="lawyer-badge mine">👥 Группа</span>
+          ${g.manager_name ? `<span class="lawyer-badge count">🧭 ${escapeHtml(g.manager_name)}</span>` : ''}
+        </div>
+      </div>`;
+    item.addEventListener('click', () => { haptic('light'); openChat(g); });
+    wrap.appendChild(item);
+  });
+}
+
+// Личные / Групповые
+document.querySelectorAll('.lwr-seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    haptic('select');
+    document.querySelectorAll('.lwr-seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    LIST_MODE = btn.dataset.list;
+    if (LIST_MODE === 'group') { renderGroups(); loadGroups(); }
+    else { renderChats(); updateEmptyHint(); loadChats(); }
+  });
+});
 
 function renderChats() {
   const wrap = $('chatList');
@@ -382,58 +460,55 @@ function updateEmptyHint() {
 // ── Open chat ─────────────────────────────────
 async function openChat(chat) {
   CURRENT_CHAT_ID = chat.id;
+  CURRENT_IS_GROUP = chat.chat_type === 'group';
   document.querySelectorAll('.lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
   document.querySelector(`.lawyer-chat-item[data-id="${chat.id}"]`)?.classList.add('active');
 
   const u = chat.user || {};
   const firstName = u.first_name || u.username || 'клиент';
   const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${chat.user_id}`;
-  const sub = [
-    u.username ? '@' + u.username : null,
-    `Telegram ID ${u.telegram_id || '—'}`,
-  ].filter(Boolean).join(' · ');
 
-  $('chatHeaderName').textContent = name;
-  $('chatHeaderSub').textContent = sub;
-  $('chatAvatar').setAttribute('data-color', avatarColorFromName(name));
-  // Apply pastel via CSS variable on the chat avatar too
   $('chatAvatar').className = 'lawyer-chat-avatar';
-  $('chatAvatar').style.background = '';
-  $('chatAvatar').innerHTML = u.photo_url
-    ? `<img src="${escapeHtml(u.photo_url)}" alt=""/>`
-    : escapeHtml(initials(name));
-  // Apply the deterministic gradient inline (since chat avatar isn't .lawyer-chat-item-avatar)
-  const pastel = avatarColorFromName(name);
-  $('chatAvatar').style.background = [
-    'linear-gradient(135deg,#6366f1,#4338ca)',
-    'linear-gradient(135deg,#ec4899,#be185d)',
-    'linear-gradient(135deg,#06b6d4,#0e7490)',
-    'linear-gradient(135deg,#8b5cf6,#6d28d9)',
-    'linear-gradient(135deg,#14b8a6,#0f766e)',
-    'linear-gradient(135deg,#f59e0b,#b45309)',
-    'linear-gradient(135deg,#ef4444,#b91c1c)',
-    'linear-gradient(135deg,#84cc16,#4d7c0f)',
-  ][pastel];
+  if (CURRENT_IS_GROUP) {
+    $('chatHeaderName').textContent = 'Общий чат';
+    const parts = [`👤 ${name}`];
+    if (chat.manager_name) parts.push(`🧭 ${chat.manager_name}`);
+    $('chatHeaderSub').textContent = parts.join(' · ');
+    $('chatAvatar').style.background = 'linear-gradient(135deg,#2563eb,#1e3a8a)';
+    $('chatAvatar').innerHTML = '👥';
+    $('claimBar').classList.add('hidden');
+    $('replyInput').placeholder = 'Сообщение в общий чат…';
+  } else {
+    const sub = [
+      u.username ? '@' + u.username : null,
+      `Telegram ID ${u.telegram_id || '—'}`,
+    ].filter(Boolean).join(' · ');
+    $('chatHeaderName').textContent = name;
+    $('chatHeaderSub').textContent = sub;
+    $('chatAvatar').setAttribute('data-color', avatarColorFromName(name));
+    $('chatAvatar').style.background = '';
+    $('chatAvatar').innerHTML = u.photo_url
+      ? `<img src="${escapeHtml(u.photo_url)}" alt=""/>`
+      : escapeHtml(initials(name));
+    $('chatAvatar').style.background = AVATAR_GRADIENTS[avatarColorFromName(name)];
+    $('claimBar').classList.toggle('hidden', !chat.is_free);
+    $('replyInput').placeholder = `Ваш ответ ${firstName}…`;
+  }
 
-  $('claimBar').classList.toggle('hidden', !chat.is_free);
   $('chatEmpty').style.display = 'none';
   $('chatMessages').classList.remove('hidden');
   $('replyArea').classList.remove('hidden');
-
-  $('replyInput').placeholder = `Ваш ответ ${firstName}…`;
   $('replyInput').value = '';
   $('replyInput').style.height = 'auto';
   $('charCounter').classList.remove('show', 'warning', 'danger');
 
   showView('chat');
 
-  // Load messages
   try {
     const msgs = await api('GET', `/api/lawyer/chats/${chat.id}/messages`);
     renderMessages(msgs);
   } catch (e) { showToast(e.message); }
 
-  // Focus textarea after the slide-in completes (don't fight the animation)
   if (window.innerWidth >= 900) {
     setTimeout(() => $('replyInput').focus(), 50);
   }
@@ -480,15 +555,31 @@ function messageEl(m, opts = {}) {
   const { isCont = false, isLastInGroup = true } = opts;
   const w = document.createElement('div');
   if (m.id != null) w.dataset.mid = m.id;
-  const kind = m.sender_type === 'user' ? 'from-user'
-             : m.sender_type === 'system' ? 'from-system'
-             : 'from-staff';
+
+  let kind, label = null, labelColor = null;
+  if (CURRENT_IS_GROUP) {
+    // In a group, the lawyer's own messages are on the right; everyone else
+    // (client + manager) on the left, labelled by role so it's clear who wrote.
+    const mine = m.sender_type === 'lawyer';
+    kind = m.sender_type === 'system' ? 'from-system' : (mine ? 'from-staff' : 'from-user');
+    if (!mine && m.sender_type !== 'system' && m.sender_name) {
+      label = grpRoleLabel(m.sender_type, m.sender_name);
+      labelColor = grpRoleColor(m.sender_type);
+    }
+  } else {
+    kind = m.sender_type === 'user' ? 'from-user'
+         : m.sender_type === 'system' ? 'from-system'
+         : 'from-staff';
+    if (kind === 'from-staff' && m.sender_name) label = m.sender_name;
+  }
+
   w.className = `msg-wrap ${kind}` + (isCont ? ' group-cont' : '') + (isLastInGroup ? ' group-last' : '');
 
-  if (!isCont && kind === 'from-staff' && m.sender_name) {
+  if (!isCont && label) {
     const s = document.createElement('div');
     s.className = 'msg-sender';
-    s.textContent = m.sender_name;
+    s.textContent = label;
+    if (labelColor) s.style.color = labelColor;
     w.appendChild(s);
   }
 
@@ -661,13 +752,17 @@ function connectWS() {
         }
         if (data.sender_type === 'user') haptic('light');
       }
-      loadChats();
+      loadChats(); loadGroups();
     } else if (data.type === 'edit') {
       applyEditedMessage(data);
-      loadChats();
+      loadChats(); loadGroups();
     } else if (data.type === 'delete') {
       applyDeletedMessage(data.message_id);
-      loadChats();
+      loadChats(); loadGroups();
+    } else if (data.type === 'group_created') {
+      haptic('warning');
+      showToast('✨ Менеджер добавил вас в общий чат', 3500);
+      loadGroups();
     } else if (data.type === 'chat_assigned') {
       haptic('warning');
       showToast('✨ Вам назначили новый чат', 3500);

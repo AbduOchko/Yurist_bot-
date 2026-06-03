@@ -117,6 +117,16 @@ async def assert_chat_access(session: AsyncSession, staff: Staff, chat_id: int) 
             return chat
         raise HTTPException(status_code=403, detail="Чат поддержки доступен только владельцу")
 
+    # Group chats: owner (oversight) + the group's own manager + the group's lawyer.
+    if chat.chat_type == ChatType.group:
+        if staff.role == StaffRole.owner:
+            return chat
+        if staff.role == StaffRole.manager and chat.manager_staff_id == staff.id:
+            return chat
+        if staff.role == StaffRole.lawyer and chat.lawyer_staff_id == staff.id:
+            return chat
+        raise HTTPException(status_code=403, detail="Нет доступа к этому групповому чату")
+
     if staff.role in (StaffRole.owner, StaffRole.manager):
         return chat
 

@@ -202,3 +202,63 @@ async def send_chat_message(
     await manager.broadcast_to_chat(chat_id, payload)
     await manager.broadcast_to_staff_for_chat(chat, payload)
     return payload
+
+
+# ── Group chats (пользователь + юрист + менеджер) ─────────────────────
+def _serialize_group(c: Chat, staff_by_id: dict) -> dict:
+    non_deleted = [m for m in c.messages if not m.is_deleted] if c.messages else []
+    last_msg = None
+    if non_deleted:
+        lm = non_deleted[-1]
+        last_msg = {
+            "content": lm.content,
+            "sender_type": lm.sender_type.value if lm.sender_type else None,
+            "sender_name": lm.sender_name,
+            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+        }
+    lawyer = staff_by_id.get(c.lawyer_staff_id)
+    mgr = staff_by_id.get(c.manager_staff_id)
+    return {
+        "id": c.id,
+        "user_id": c.user_id,
+        "chat_type": c.chat_type.value,
+        "lawyer_staff_id": c.lawyer_staff_id,
+        "manager_staff_id": c.manager_staff_id,
+        "lawyer_name": lawyer.full_name if lawyer else None,
+        "manager_name": mgr.full_name if mgr else None,
+        "user": {
+            "telegram_id": c.user.telegram_id,
+            "first_name": c.user.first_name,
+            "last_name": c.user.last_name,
+            "username": c.user.username,
+            "photo_url": c.user.photo_url,
+        },
+        "message_count": len(non_deleted),
+        "last_message": last_msg,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+@router.get("/groups")
+async def my_groups(
+    staff: Staff = LawyerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    """Group chats this lawyer is part of (owner sees all)."""
+    q = (
+        select(Chat)
+        .options(selectinload(Chat.user), selectinload(Chat.messages))
+        .where(Chat.chat_type == ChatType.group)
+    )
+    if staff.role == StaffRole.lawyer:
+        q = q.where(Chat.lawyer_staff_id == staff.id)
+    q = q.order_by(Chat.updated_at.desc())
+    chats = (await session.execute(q)).scalars().all()
+
+    ids = {c.lawyer_staff_id for c in chats if c.lawyer_staff_id} | \
+          {c.manager_staff_id for c in chats if c.manager_staff_id}
+    staff_by_id = {}
+    if ids:
+        rows = (await session.execute(select(Staff).where(Staff.id.in_(ids)))).scalars().all()
+        staff_by_id = {s.id: s for s in rows}
+    return [_serialize_group(c, staff_by_id) for c in chats]

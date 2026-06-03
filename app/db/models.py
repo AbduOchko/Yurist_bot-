@@ -17,6 +17,7 @@ class ChatType(str, enum.Enum):
     lawyer = "lawyer"
     match = "match"
     support = "support"  # прямой чат с владельцем проекта
+    group = "group"      # общий чат: пользователь + юрист + менеджер
 
 
 class MessageType(str, enum.Enum):
@@ -33,6 +34,7 @@ class SenderType(str, enum.Enum):
     user = "user"
     ai = "ai"
     lawyer = "lawyer"
+    manager = "manager"  # сообщения менеджера в групповом чате
     system = "system"
 
 
@@ -73,6 +75,13 @@ class Chat(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     chat_type = Column(Enum(ChatType), nullable=False)
     lawyer_staff_id = Column(
+        Integer,
+        ForeignKey("staff.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Менеджер-создатель группового чата (chat_type=group). Для остальных типов NULL.
+    manager_staff_id = Column(
         Integer,
         ForeignKey("staff.id", ondelete="SET NULL"),
         nullable=True,

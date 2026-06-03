@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.websocket_manager import manager
 from app.db.crud import (
@@ -13,7 +14,7 @@ from app.db.crud import (
     get_pinned_messages,
     get_user_by_telegram_id,
 )
-from app.db.models import Chat, ChatType, MessageType, SenderType
+from app.db.models import Chat, ChatType, MessageType, SenderType, Staff
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -37,6 +38,72 @@ class ChatOut(BaseModel):
 async def get_or_create(data: ChatIn, session: AsyncSession = Depends(get_session)):
     chat = await get_or_create_chat(session, user_id=data.user_id, chat_type=data.chat_type)
     return chat
+
+
+# ── User's group chats (must be declared BEFORE /{chat_id}) ───────────
+async def _staff_names(session, *staff_ids):
+    ids = {i for i in staff_ids if i}
+    if not ids:
+        return {}
+    rows = (await session.execute(select(Staff).where(Staff.id.in_(ids)))).scalars().all()
+    return {s.id: s.full_name for s in rows}
+
+
+@router.get("/groups")
+async def user_groups(telegram_id: int, session: AsyncSession = Depends(get_session)):
+    """Group chats the user participates in — shown under the 3 main cards."""
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if not user:
+        return []
+    chats = (await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.chat_type == ChatType.group, Chat.user_id == user.id)
+        .order_by(Chat.updated_at.desc())
+    )).scalars().all()
+
+    all_ids = set()
+    for c in chats:
+        all_ids.update([c.lawyer_staff_id, c.manager_staff_id])
+    names = await _staff_names(session, *all_ids)
+
+    out = []
+    for c in chats:
+        msgs = [m for m in c.messages if not m.is_deleted]
+        if c.user_cleared_at:
+            msgs = [m for m in msgs if m.created_at and m.created_at > c.user_cleared_at]
+        last = None
+        if msgs:
+            lm = msgs[-1]
+            last = {
+                "content": lm.content,
+                "sender_type": lm.sender_type.value if lm.sender_type else None,
+                "created_at": lm.created_at.isoformat() if lm.created_at else None,
+            }
+        out.append({
+            "chat_id": c.id,
+            "lawyer_name": names.get(c.lawyer_staff_id),
+            "manager_name": names.get(c.manager_staff_id),
+            "message_count": len(msgs),
+            "last_message": last,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        })
+    return out
+
+
+@router.get("/group-info/{chat_id}")
+async def group_info(chat_id: int, session: AsyncSession = Depends(get_session)):
+    chat = (await session.execute(
+        select(Chat).where(Chat.id == chat_id, Chat.chat_type == ChatType.group)
+    )).scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Групповой чат не найден")
+    names = await _staff_names(session, chat.lawyer_staff_id, chat.manager_staff_id)
+    return {
+        "chat_id": chat.id,
+        "lawyer_name": names.get(chat.lawyer_staff_id),
+        "manager_name": names.get(chat.manager_staff_id),
+    }
 
 
 @router.get("/{chat_id}", response_model=ChatOut)

@@ -211,6 +211,33 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
 }
 
+/* ── Личные / Групповые segmented control ──────────────────────────── */
+.lwr-segment {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px 2px;
+  flex-shrink: 0;
+}
+.lwr-seg-btn {
+  flex: 1;
+  padding: 9px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all 0.15s var(--transition);
+}
+.lwr-seg-btn:active { transform: scale(0.98); }
+.lwr-seg-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+
 /* ── Chat list ─────────────────────────────────────────────────────── */
 .lawyer-list-meta {
   padding: 12px 20px;

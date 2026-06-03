@@ -70,7 +70,7 @@ async def staff_websocket(websocket: WebSocket):
     if role == StaffRole.owner:
         await manager.connect_owner(websocket)
     elif role == StaffRole.manager:
-        await manager.connect_manager(websocket)
+        await manager.connect_manager(websocket, staff_id)
     elif role == StaffRole.lawyer:
         await manager.connect_lawyer(websocket, staff_id)
     else:
@@ -98,6 +98,6 @@ async def staff_websocket(websocket: WebSocket):
         if role == StaffRole.owner:
             manager.disconnect_owner(websocket)
         elif role == StaffRole.manager:
-            manager.disconnect_manager(websocket)
+            manager.disconnect_manager(websocket, staff_id)
         elif role == StaffRole.lawyer:
             manager.disconnect_lawyer(websocket, staff_id)

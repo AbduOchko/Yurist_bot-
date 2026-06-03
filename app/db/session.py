@@ -66,6 +66,15 @@ async def create_tables():
             "ALTER TABLE chats ADD COLUMN IF NOT EXISTS user_cleared_at TIMESTAMP;"
         ))
 
+        # ── Group chats: manager who created the group ────────────────
+        await conn.execute(text(
+            "ALTER TABLE chats ADD COLUMN IF NOT EXISTS manager_staff_id INTEGER "
+            "REFERENCES staff(id) ON DELETE SET NULL;"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chats_manager_staff_id ON chats (manager_staff_id);"
+        ))
+
         # ── Staff telegram_id: no uniqueness at all. One telegram_id may map to
         # any number of staff rows (multiple roles, or even several rows with the
         # same role). Drop the legacy single-column UNIQUE and the later
@@ -87,19 +96,25 @@ async def create_tables():
     # ALTER TYPE ADD VALUE can't run inside a transaction on older Postgres,
     # so use an autocommit connection. The enum type name is resolved by a
     # value unique to ChatType ('match') so we don't hardcode it.
+    # Enum type names are resolved by a label unique to each enum
+    # ('match' → ChatType, 'user' → SenderType) so we don't hardcode names.
     try:
         ac_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
         async with ac_engine.connect() as conn:
-            typ = (await conn.execute(text(
-                "SELECT t.typname FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid "
-                "WHERE e.enumlabel = 'match' LIMIT 1;"
-            ))).scalar()
-            if typ:
-                await conn.execute(text(
-                    f'ALTER TYPE "{typ}" ADD VALUE IF NOT EXISTS \'support\';'
-                ))
+            async def _add_enum_value(discriminator: str, new_value: str):
+                typ = (await conn.execute(text(
+                    "SELECT t.typname FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid "
+                    "WHERE e.enumlabel = :lbl LIMIT 1;"
+                ), {"lbl": discriminator})).scalar()
+                if typ:
+                    await conn.execute(text(
+                        f'ALTER TYPE "{typ}" ADD VALUE IF NOT EXISTS \'{new_value}\';'
+                    ))
+            await _add_enum_value("match", "support")   # ChatType.support
+            await _add_enum_value("match", "group")     # ChatType.group
+            await _add_enum_value("user", "manager")    # SenderType.manager
     except Exception as e:
-        logger.warning(f"Could not add 'support' to ChatType enum (non-fatal): {e}")
+        logger.warning(f"Could not add new enum values (non-fatal): {e}")
 
 
 async def bootstrap_owner():

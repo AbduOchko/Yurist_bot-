@@ -45,6 +45,8 @@ if (tg) {
 // ── URL params ──────────────────────────────
 const params = new URLSearchParams(location.search);
 const CHAT_TYPE = params.get('type') || 'ai';
+// Групповые чаты открываются по конкретному id (у пользователя их может быть много).
+const FORCED_CHAT_ID = params.get('chat_id') ? parseInt(params.get('chat_id')) : null;
 const API_BASE = '';  // same origin
 
 const CHAT_CONFIG = {
@@ -52,7 +54,20 @@ const CHAT_CONFIG = {
   lawyer:  { title: 'Личный Юрист',   status: 'онлайн',         icon: 'lawyer'  },
   match:   { title: 'Подбор Юриста',  status: 'онлайн',         icon: 'match'   },
   support: { title: 'Поддержка',      status: 'онлайн',         icon: 'support' },
+  group:   { title: 'Общий чат',      status: 'юрист и менеджер', icon: 'group' },
 };
+
+// Роли участников в групповом чате — для подписи «кто пишет».
+function roleLabel(senderType, name) {
+  if (senderType === 'lawyer')  return `⚖️ ${name || 'Юрист'}`;
+  if (senderType === 'manager') return `🧭 ${name || 'Менеджер'}`;
+  return `👤 ${name || 'Клиент'}`;
+}
+function roleColor(senderType) {
+  if (senderType === 'lawyer')  return '#60a5fa';
+  if (senderType === 'manager') return '#fbbf24';
+  return '#a78bfa';
+}
 
 const FORWARD_TARGETS = {
   ai:     { title: 'ИИ-Советник',   desc: 'Консультация с ИИ'           },
@@ -118,18 +133,31 @@ async function init() {
   $list.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
 
   try {
-    const userRes = await api('POST', '/api/users/', {
-      telegram_id: USER_ID_INT,
-      username: USER.username || null,
-      first_name: USER.first_name || 'Гость',
-      last_name: USER.last_name || null,
-    });
+    if (FORCED_CHAT_ID) {
+      // Открыт конкретный чат по id (групповой). Регистрируем пользователя на
+      // всякий случай, но чат не пере-создаём — используем переданный id.
+      await api('POST', '/api/users/', {
+        telegram_id: USER_ID_INT,
+        username: USER.username || null,
+        first_name: USER.first_name || 'Гость',
+        last_name: USER.last_name || null,
+      });
+      CHAT_ID = FORCED_CHAT_ID;
+      if (CHAT_TYPE === 'group') await loadGroupInfo();
+    } else {
+      const userRes = await api('POST', '/api/users/', {
+        telegram_id: USER_ID_INT,
+        username: USER.username || null,
+        first_name: USER.first_name || 'Гость',
+        last_name: USER.last_name || null,
+      });
 
-    const chatRes = await api('POST', '/api/chats/', {
-      user_id: userRes.id,
-      chat_type: CHAT_TYPE,
-    });
-    CHAT_ID = chatRes.id;
+      const chatRes = await api('POST', '/api/chats/', {
+        user_id: userRes.id,
+        chat_type: CHAT_TYPE,
+      });
+      CHAT_ID = chatRes.id;
+    }
 
     await loadMessages();
     connectWS();
@@ -156,6 +184,7 @@ function setChatAvatar(type) {
     lawyer: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
     match:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`,
     support:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg>`,
+    group:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
   };
   document.getElementById('chatAvatar').innerHTML = icons[type] || icons.ai;
 }
@@ -181,6 +210,17 @@ async function loadPinned() {
   try {
     pinnedMessages = await api('GET', `/api/chats/${CHAT_ID}/pinned`);
     updatePinnedBar();
+  } catch {}
+}
+
+async function loadGroupInfo() {
+  try {
+    const info = await api('GET', `/api/chats/group-info/${CHAT_ID}`);
+    $title.textContent = 'Общий чат';
+    const parts = [];
+    if (info.lawyer_name) parts.push(`⚖️ ${info.lawyer_name}`);
+    if (info.manager_name) parts.push(`🧭 ${info.manager_name}`);
+    $statusTxt.textContent = parts.join(' · ') || 'юрист и менеджер';
   } catch {}
 }
 
@@ -297,6 +337,7 @@ function renderEmpty() {
     lawyer: { icon: '👨‍💼', title: 'Личный Юрист',        text: 'Напишите ваш вопрос — юрист ответит в ближайшее время.' },
     match:  { icon: '🔍', title: 'Подбор Юриста',        text: 'Опишите вашу проблему — мы подберём подходящего специалиста.' },
     support:{ icon: '🛟', title: 'Поддержка',            text: 'Напишите ваш вопрос — владелец проекта ответит вам напрямую.' },
+    group:  { icon: '👥', title: 'Общий чат',            text: 'Здесь вы, ваш юрист и менеджер. Напишите сообщение — его увидят все участники.' },
   };
   const p = prompts[CHAT_TYPE];
   $list.innerHTML = `
@@ -334,7 +375,13 @@ function createMessageEl(msg) {
   if (!isUser && msg.sender_name) {
     const lbl = document.createElement('div');
     lbl.className = 'message-group-label';
-    lbl.textContent = msg.sender_name;
+    if (CHAT_TYPE === 'group') {
+      // В групповом чате подписываем «кто это» (роль + имя) и красим по роли.
+      lbl.textContent = roleLabel(msg.sender_type, msg.sender_name);
+      lbl.style.color = roleColor(msg.sender_type);
+    } else {
+      lbl.textContent = msg.sender_name;
+    }
     wrap.appendChild(lbl);
   }
 

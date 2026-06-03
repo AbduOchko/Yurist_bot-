@@ -1754,3 +1754,35 @@ body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ─── GROUP CHAT CARDS (under the 3 main cards) ─── */
+.group-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 20px;
+  margin-top: 20px;
+}
+.group-cards-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0 4px 2px;
+}
+.group-card {
+  border-color: rgba(96, 165, 250, 0.45) !important;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.18), 0 10px 30px rgba(37, 99, 235, 0.2);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), var(--bg-card)) !important;
+}
+.group-card .card-icon {
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(96, 165, 250, 0.3);
+}
+.group-card .card-icon svg { color: #93c5fd; }
+.badge.group-badge {
+  background: rgba(96, 165, 250, 0.2);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #93c5fd;
+}

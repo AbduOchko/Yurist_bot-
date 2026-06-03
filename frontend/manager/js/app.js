@@ -9,8 +9,10 @@ let TOKEN = localStorage.getItem(TOKEN_KEY) || '';
 let ME = null;
 let USERS = [];
 let LAWYERS = [];
+let GROUPS = [];
 let CURRENT_CHAT_ID = null;
 let CURRENT_USER = null;
+let CURRENT_GROUP_ID = null;
 let ASSIGN_USER_ID = null;
 let WS = null;
 
@@ -161,8 +163,11 @@ document.querySelectorAll('.mgr-seg-btn').forEach(btn => {
     btn.classList.add('active');
     const v = btn.dataset.view;
     $('view-chats').classList.toggle('active', v === 'chats');
+    $('view-groups').classList.toggle('active', v === 'groups');
     $('view-lawyers').classList.toggle('active', v === 'lawyers');
-    if (v === 'lawyers') loadLawyers(); else loadUsers();
+    if (v === 'lawyers') loadLawyers();
+    else if (v === 'groups') loadGroups();
+    else loadUsers();
   });
 });
 
@@ -174,7 +179,11 @@ function setTgBackButton(show) {
     else { tg.BackButton.offClick(handleTgBack); tg.BackButton.hide(); }
   } catch {}
 }
-function handleTgBack() { haptic('light'); showView('list'); }
+function handleTgBack() {
+  haptic('light');
+  if ($('view-groups').classList.contains('active')) showGroupView('list');
+  else showView('list');
+}
 
 function showView(name) {
   if (name === 'chat') {
@@ -510,6 +519,198 @@ $('lwSave').addEventListener('click', async () => {
   } catch (e) { $('lwError').textContent = e.message; }
 });
 
+// ── Group chats (пользователь + юрист + менеджер) ─────────────────────
+const GRP_GRADIENT = 'linear-gradient(135deg,#2563eb,#1e3a8a)';
+function grpRoleLabel(t, name) {
+  if (t === 'lawyer')  return `⚖️ ${name || 'Юрист'}`;
+  if (t === 'manager') return `🧭 ${name || 'Менеджер'}`;
+  return `👤 ${name || 'Клиент'}`;
+}
+function grpRoleColor(t) {
+  if (t === 'lawyer')  return '#60a5fa';
+  if (t === 'manager') return '#fbbf24';
+  return '#a78bfa';
+}
+
+async function loadGroups() {
+  try { GROUPS = await api('GET', '/api/manager/groups'); renderGroupsList(); }
+  catch (e) { showToast(e.message); }
+}
+
+function renderGroupsList() {
+  const wrap = $('groupsList');
+  if (!GROUPS.length) {
+    wrap.innerHTML = `<div class="lawyer-list-empty"><div class="lawyer-list-empty-icon">👥</div><div class="lawyer-list-empty-title">Групп пока нет</div><div class="lawyer-list-empty-text">Создайте общий чат — пользователь, юрист и вы в одном чате.</div></div>`;
+    return;
+  }
+  wrap.innerHTML = '';
+  GROUPS.forEach((g, i) => {
+    const u = g.user || {};
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${g.user_id}`;
+    const last = g.last_message;
+    const preview = last?.content || 'Нет сообщений';
+    const time = smartTime(last?.created_at || g.updated_at);
+    const item = document.createElement('div');
+    item.className = 'lawyer-chat-item' + (g.id === CURRENT_GROUP_ID ? ' active' : '');
+    item.dataset.chatId = g.id;
+    item.style.setProperty('--item-delay', `${Math.min(i * 35, 320)}ms`);
+    item.innerHTML = `
+      <div class="lawyer-chat-item-avatar" style="background:${GRP_GRADIENT}">👥</div>
+      <div class="lawyer-chat-item-body">
+        <div class="lawyer-chat-item-top">
+          <div class="lawyer-chat-item-name">${escapeHtml(name)}</div>
+          <div class="lawyer-chat-item-time">${escapeHtml(time)}</div>
+        </div>
+        <div class="lawyer-chat-item-preview">${escapeHtml(preview)}</div>
+        <div class="lawyer-chat-item-badges">
+          <span class="lawyer-badge free">⚖️ ${escapeHtml(g.lawyer_name || 'юрист')}</span>
+          <span class="lawyer-badge count">${g.message_count} ${pluralRu(g.message_count, 'сообщ.', 'сообщ.', 'сообщ.')}</span>
+        </div>
+      </div>`;
+    item.addEventListener('click', () => { haptic('light'); openGroup(g); });
+    wrap.appendChild(item);
+  });
+}
+
+async function openGroup(g) {
+  CURRENT_GROUP_ID = g.id;
+  document.querySelectorAll('#groupsList .lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
+  document.querySelector(`#groupsList .lawyer-chat-item[data-chat-id="${g.id}"]`)?.classList.add('active');
+  const u = g.user || {};
+  const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || `Пользователь #${g.user_id}`;
+  $('groupHeaderName').textContent = 'Общий чат';
+  const parts = [`👤 ${name}`];
+  if (g.lawyer_name) parts.push(`⚖️ ${g.lawyer_name}`);
+  if (g.manager_name) parts.push(`🧭 ${g.manager_name}`);
+  $('groupHeaderSub').textContent = parts.join(' · ');
+  $('groupChatEmpty').style.display = 'none';
+  $('groupMessages').classList.remove('hidden');
+  $('groupReplyArea').classList.remove('hidden');
+  $('groupReplyInput').value = ''; $('groupReplyInput').style.height = 'auto';
+  showGroupView('chat');
+  try { const msgs = await api('GET', `/api/manager/chats/${g.id}/messages`); renderGroupMessages(msgs); }
+  catch (e) { showToast(e.message); }
+  if (window.innerWidth >= 900) setTimeout(() => $('groupReplyInput').focus(), 50);
+}
+
+function renderGroupMessages(msgs) {
+  const wrap = $('groupMessages'); wrap.innerHTML = '';
+  let lastDateKey = null, lastSenderKey = null;
+  msgs.forEach(m => {
+    const dateKey = m.created_at ? new Date(m.created_at).toDateString() : null;
+    if (dateKey && dateKey !== lastDateKey) {
+      const sep = document.createElement('div'); sep.className = 'msg-date-separator';
+      sep.textContent = formatDateSeparator(m.created_at); wrap.appendChild(sep);
+      lastDateKey = dateKey; lastSenderKey = null;
+    }
+    const senderKey = `${m.sender_type}:${m.sender_id || m.sender_name || ''}`;
+    const isCont = senderKey === lastSenderKey && m.sender_type !== 'system';
+    const el = groupMessageEl(m, { isCont }); el.dataset.sk = senderKey; wrap.appendChild(el);
+    lastSenderKey = m.sender_type === 'system' ? null : senderKey;
+  });
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+// myType for the manager view is 'manager' (own messages on the right).
+function groupMessageEl(m, opts = {}) {
+  const { isCont = false } = opts;
+  const mine = m.sender_type === 'manager';
+  const kind = m.sender_type === 'system' ? 'from-system' : (mine ? 'from-staff' : 'from-user');
+  const w = document.createElement('div'); if (m.id != null) w.dataset.mid = m.id;
+  w.className = `msg-wrap ${kind}` + (isCont ? ' group-cont' : '') + ' group-last';
+  if (!isCont && !mine && m.sender_type !== 'system' && m.sender_name) {
+    const s = document.createElement('div'); s.className = 'msg-sender';
+    s.textContent = grpRoleLabel(m.sender_type, m.sender_name);
+    s.style.color = grpRoleColor(m.sender_type);
+    w.appendChild(s);
+  }
+  const b = document.createElement('div'); b.className = 'msg-bubble';
+  if (m.file_url && m.message_type !== 'text' && m.message_type !== 'system') {
+    b.innerHTML = `<a href="${escapeHtml(m.file_url)}" target="_blank" style="color:inherit;text-decoration:underline">${escapeHtml(m.file_name || 'Файл')}</a>`;
+    if (m.content) { const c = document.createElement('div'); c.style.marginTop = '4px'; c.textContent = m.content; b.appendChild(c); }
+  } else b.textContent = m.content || '';
+  w.appendChild(b);
+  if (m.created_at && m.sender_type !== 'system') { const t = document.createElement('div'); t.className = 'msg-time'; t.textContent = fmtMsgTime(m.created_at); w.appendChild(t); }
+  return w;
+}
+
+function addGroupMessageIfNew(m) {
+  if (m == null || m.id == null) return;
+  const wrap = $('groupMessages'); if (!wrap || wrap.querySelector(`[data-mid="${m.id}"]`)) return;
+  const lastEl = wrap.querySelector('.msg-wrap:last-child');
+  const senderKey = `${m.sender_type}:${m.sender_id || m.sender_name || ''}`;
+  const isCont = lastEl && lastEl.dataset.sk === senderKey && m.sender_type !== 'system';
+  if (isCont && lastEl) { lastEl.querySelector('.msg-time')?.remove(); lastEl.querySelector('.msg-sender')?.remove(); }
+  const el = groupMessageEl(m, { isCont }); el.dataset.sk = senderKey; el.classList.add('msg-new'); wrap.appendChild(el);
+  const dist = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
+  if (dist < 140) wrap.scrollTo({ top: wrap.scrollHeight, behavior: 'smooth' });
+}
+
+function applyGroupEdit(m) {
+  const el = $('groupMessages')?.querySelector(`[data-mid="${m.id}"]`); if (!el) return;
+  const isCont = el.classList.contains('group-cont'); const sk = el.dataset.sk;
+  const fresh = groupMessageEl(m, { isCont }); if (sk) fresh.dataset.sk = sk; el.replaceWith(fresh);
+}
+function applyGroupDelete(messageId) {
+  const el = $('groupMessages')?.querySelector(`[data-mid="${messageId}"]`); if (!el) return;
+  const b = el.querySelector('.msg-bubble'); if (b) { b.textContent = 'Сообщение удалено'; b.style.opacity = '0.55'; b.style.fontStyle = 'italic'; }
+  el.querySelector('.msg-time')?.remove();
+}
+
+async function sendGroupReply() {
+  const input = $('groupReplyInput'), btn = $('groupReplyBtn');
+  const text = input.value.trim(); if (!text || !CURRENT_GROUP_ID) return;
+  input.value = ''; input.style.height = 'auto';
+  btn.classList.add('sending'); haptic('medium');
+  try {
+    const m = await api('POST', `/api/manager/chats/${CURRENT_GROUP_ID}/messages`, { content: text });
+    btn.classList.remove('sending'); btn.classList.add('success'); haptic('success');
+    setTimeout(() => btn.classList.remove('success'), 380);
+    addGroupMessageIfNew(m); loadGroups();
+  } catch (e) { btn.classList.remove('sending'); showToast(e.message); haptic('error'); input.value = text; }
+}
+$('groupReplyBtn').addEventListener('click', sendGroupReply);
+$('groupReplyInput').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 130) + 'px'; });
+$('groupReplyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendGroupReply(); } });
+
+function showGroupView(name) {
+  if (name === 'chat') {
+    $('groupListView').classList.remove('active'); $('groupChatView').classList.add('active');
+    if (window.innerWidth < 900) setTgBackButton(true);
+  } else {
+    $('groupChatView').classList.remove('active'); $('groupListView').classList.add('active');
+    CURRENT_GROUP_ID = null;
+    document.querySelectorAll('#groupsList .lawyer-chat-item.active').forEach(el => el.classList.remove('active'));
+    setTgBackButton(false);
+  }
+}
+$('groupBackBtn').addEventListener('click', () => { haptic('light'); showGroupView('list'); });
+
+// Create group modal
+$('createGroupBtn').addEventListener('click', () => {
+  $('grpUser').innerHTML = USERS.length
+    ? USERS.map(u => `<option value="${u.user_id}">${escapeHtml([u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || ('#' + u.user_id))}</option>`).join('')
+    : '<option value="">— нет пользователей —</option>';
+  const active = LAWYERS.filter(l => l.is_active);
+  $('grpLawyer').innerHTML = active.length
+    ? active.map(l => `<option value="${l.id}">${escapeHtml(l.full_name)}${l.specialization ? ` — ${escapeHtml(l.specialization)}` : ''}</option>`).join('')
+    : '<option value="">— нет юристов —</option>';
+  $('grpError').textContent = '';
+  $('groupModal').classList.remove('hidden');
+});
+$('grpCancel').addEventListener('click', () => $('groupModal').classList.add('hidden'));
+$('grpSave').addEventListener('click', async () => {
+  const user_id = parseInt($('grpUser').value);
+  const lawyer_id = parseInt($('grpLawyer').value);
+  if (!user_id || !lawyer_id) { $('grpError').textContent = 'Выберите пользователя и юриста'; return; }
+  try {
+    const r = await api('POST', '/api/manager/groups', { user_id, lawyer_id });
+    $('groupModal').classList.add('hidden'); showToast('Общий чат создан'); haptic('success');
+    await loadGroups();
+    const g = GROUPS.find(x => x.id === r.chat_id); if (g) openGroup(g);
+  } catch (e) { $('grpError').textContent = e.message; }
+});
+
 // ── WebSocket ─────────────────────────────────
 function connectWS() {
   if (!TOKEN) return;
@@ -519,16 +720,17 @@ function connectWS() {
     let data; try { data = JSON.parse(e.data); } catch { return; }
     if (data.type === 'message' || data.type === 'new_message') {
       if (data.chat_id === CURRENT_CHAT_ID) addMessageIfNew(data);
-      else {
+      if (data.chat_id === CURRENT_GROUP_ID) addGroupMessageIfNew(data);
+      if (data.chat_id !== CURRENT_CHAT_ID && data.chat_id !== CURRENT_GROUP_ID) {
         const item = document.querySelector(`.lawyer-chat-item[data-chat-id="${data.chat_id}"]`);
         if (item) { item.classList.remove('pulse'); void item.offsetWidth; item.classList.add('pulse'); setTimeout(() => item.classList.remove('pulse'), 1100); }
         if (data.sender_type === 'user') haptic('light');
       }
-      loadUsers();
+      loadUsers(); loadGroups();
     } else if (data.type === 'edit') {
-      applyEdit(data); loadUsers();
+      applyEdit(data); applyGroupEdit(data); loadUsers(); loadGroups();
     } else if (data.type === 'delete') {
-      applyDelete(data.message_id); loadUsers();
+      applyDelete(data.message_id); applyGroupDelete(data.message_id); loadUsers(); loadGroups();
     }
   };
   WS.onclose = () => setTimeout(connectWS, 3000);

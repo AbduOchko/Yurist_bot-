@@ -17,7 +17,7 @@ from app.api.security import (
 )
 from app.api.websocket_manager import manager
 from app.db import crud
-from app.db.models import Chat, ChatType, MessageType, SenderType, Staff, StaffRole
+from app.db.models import Chat, ChatType, MessageType, SenderType, Staff, StaffRole, User
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/manager", tags=["manager"])
@@ -138,10 +138,13 @@ async def send_chat_message(
     session: AsyncSession = Depends(get_session),
 ):
     chat = await assert_chat_access(session, staff, chat_id)
+    # In group chats the manager writes as `manager` (so the UI can tell manager
+    # apart from lawyer); elsewhere they write as generic staff (`lawyer`).
+    stype = SenderType.manager if chat.chat_type == ChatType.group else SenderType.lawyer
     msg = await crud.create_message(
         session,
         chat_id=chat_id,
-        sender_type=SenderType.lawyer,
+        sender_type=stype,
         content=data.content,
         message_type=MessageType.text,
         sender_id=staff.id,
@@ -152,7 +155,7 @@ async def send_chat_message(
         "type": "message",
         "id": msg.id,
         "chat_id": chat_id,
-        "sender_type": "lawyer",
+        "sender_type": stype.value,
         "sender_name": staff.full_name,
         "sender_id": staff.id,
         "content": data.content,
@@ -399,3 +402,131 @@ async def open_user_chat(
     """Get-or-create the manager↔user (match) chat for a user, return its id."""
     chat = await crud.get_or_create_chat(session, user_id=data.user_id, chat_type=ChatType.match)
     return {"chat_id": chat.id}
+
+
+# ── Group chats (пользователь + юрист + менеджер) ─────────────────────
+def _serialize_group(c: Chat, staff_by_id: dict) -> dict:
+    non_deleted = [m for m in c.messages if not m.is_deleted] if c.messages else []
+    last_msg = None
+    if non_deleted:
+        lm = non_deleted[-1]
+        last_msg = {
+            "content": lm.content,
+            "sender_type": lm.sender_type.value if lm.sender_type else None,
+            "sender_name": lm.sender_name,
+            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+        }
+    lawyer = staff_by_id.get(c.lawyer_staff_id)
+    mgr = staff_by_id.get(c.manager_staff_id)
+    return {
+        "id": c.id,
+        "user_id": c.user_id,
+        "chat_type": c.chat_type.value,
+        "lawyer_staff_id": c.lawyer_staff_id,
+        "manager_staff_id": c.manager_staff_id,
+        "lawyer_name": lawyer.full_name if lawyer else None,
+        "manager_name": mgr.full_name if mgr else None,
+        "user": {
+            "telegram_id": c.user.telegram_id,
+            "first_name": c.user.first_name,
+            "last_name": c.user.last_name,
+            "username": c.user.username,
+            "photo_url": c.user.photo_url,
+        },
+        "message_count": len(non_deleted),
+        "last_message": last_msg,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+async def _groups_with_names(session, base_query):
+    chats = (await session.execute(base_query)).scalars().all()
+    ids = {c.lawyer_staff_id for c in chats if c.lawyer_staff_id} | \
+          {c.manager_staff_id for c in chats if c.manager_staff_id}
+    staff_by_id = {}
+    if ids:
+        rows = (await session.execute(select(Staff).where(Staff.id.in_(ids)))).scalars().all()
+        staff_by_id = {s.id: s for s in rows}
+    return [_serialize_group(c, staff_by_id) for c in chats]
+
+
+@router.get("/groups")
+async def list_groups(
+    staff: Staff = ManagerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    """Group chats. Manager sees their own; owner sees all."""
+    q = (
+        select(Chat)
+        .options(selectinload(Chat.user), selectinload(Chat.messages))
+        .where(Chat.chat_type == ChatType.group)
+    )
+    if staff.role == StaffRole.manager:
+        q = q.where(Chat.manager_staff_id == staff.id)
+    q = q.order_by(Chat.updated_at.desc())
+    return await _groups_with_names(session, q)
+
+
+class CreateGroupIn(BaseModel):
+    user_id: int
+    lawyer_id: int
+
+
+@router.post("/groups")
+async def create_group(
+    data: CreateGroupIn,
+    staff: Staff = ManagerDep,
+    session: AsyncSession = Depends(get_session),
+):
+    lawyer = (await session.execute(
+        select(Staff).where(
+            Staff.id == data.lawyer_id,
+            Staff.role == StaffRole.lawyer,
+            Staff.is_active == True,  # noqa: E712
+        )
+    )).scalar_one_or_none()
+    if not lawyer:
+        raise HTTPException(status_code=404, detail="Юрист не найден или не активен")
+
+    user = (await session.execute(select(User).where(User.id == data.user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    chat = Chat(
+        chat_type=ChatType.group,
+        user_id=data.user_id,
+        lawyer_staff_id=lawyer.id,
+        manager_staff_id=staff.id,
+    )
+    session.add(chat)
+    await session.commit()
+    await session.refresh(chat)
+
+    sys_msg = await crud.create_message(
+        session,
+        chat_id=chat.id,
+        sender_type=SenderType.system,
+        content=(
+            f"Создан общий чат. Участники: "
+            f"клиент {user.first_name or 'пользователь'}, "
+            f"юрист {lawyer.full_name}, менеджер {staff.full_name}."
+        ),
+        message_type=MessageType.system,
+        sender_name="Система",
+    )
+    payload = {
+        "type": "message",
+        "id": sys_msg.id,
+        "chat_id": chat.id,
+        "sender_type": "system",
+        "sender_name": "Система",
+        "content": sys_msg.content,
+        "message_type": "system",
+        "created_at": sys_msg.created_at.isoformat(),
+    }
+    await manager.broadcast_to_chat(chat.id, payload)
+    await manager.broadcast_to_staff_for_chat(chat, payload)
+    # Tell the lawyer a new group appeared so it shows up in their list live.
+    await manager.broadcast_to_lawyer(lawyer.id, {"type": "group_created", "chat_id": chat.id})
+
+    return {"ok": True, "chat_id": chat.id}

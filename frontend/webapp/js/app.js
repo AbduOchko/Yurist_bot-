@@ -214,6 +214,7 @@ function onAuthSuccess(token, login, photoUrl) {
   localStorage.setItem(AUTH_LOGIN_KEY, login);
   $authScreen.classList.add('hidden');
   loadProfile(login, photoUrl);
+  loadGroups();
 }
 
 // ── Logout ────────────────────────────────
@@ -232,6 +233,43 @@ function showToast(msg) {
   t.classList.add('show');
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function escapeHtmlSafe(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+// ── Group chats (shown under the 3 main cards) ──
+async function loadGroups() {
+  try {
+    const res = await fetch(`/api/chats/groups?telegram_id=${TG_ID}`);
+    if (!res.ok) return;
+    renderGroupCards(await res.json());
+  } catch {}
+}
+
+function renderGroupCards(groups) {
+  const wrap = document.getElementById('groupCards');
+  if (!wrap) return;
+  if (!Array.isArray(groups) || !groups.length) { wrap.innerHTML = ''; return; }
+  const icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+  const chevron = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`;
+  let html = `<div class="group-cards-title">Общие чаты</div>`;
+  for (const g of groups) {
+    const parts = [];
+    if (g.lawyer_name) parts.push(`⚖️ ${escapeHtmlSafe(g.lawyer_name)}`);
+    if (g.manager_name) parts.push(`🧭 ${escapeHtmlSafe(g.manager_name)}`);
+    const sub = parts.join(' · ') || 'Юрист и менеджер';
+    html += `
+      <a class="card group-card" href="/chat.html?type=group&chat_id=${g.chat_id}">
+        <div class="card-icon">${icon}</div>
+        <div class="card-content">
+          <div class="card-title">Общий чат</div>
+          <div class="card-desc">${sub}</div>
+        </div>
+        <div class="card-arrow">${chevron}</div>
+        <div class="badge group-badge">Группа</div>
+      </a>`;
+  }
+  wrap.innerHTML = html;
 }
 
 // ── Clear chat history (only on the user's side) ──
@@ -314,6 +352,7 @@ async function checkAuth() {
       try { verifyData = await res.json(); } catch {}
       $authScreen.classList.add('hidden');
       loadProfile(login, verifyData.photo_url);
+      loadGroups();
     } else {
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(AUTH_LOGIN_KEY);
