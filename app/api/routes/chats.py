@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.db.crud import (
     create_message,
@@ -78,7 +79,7 @@ async def user_groups(telegram_id: int, session: AsyncSession = Depends(get_sess
             last = {
                 "content": lm.content,
                 "sender_type": lm.sender_type.value if lm.sender_type else None,
-                "created_at": lm.created_at.isoformat() if lm.created_at else None,
+                "created_at": iso_utc(lm.created_at),
             }
         out.append({
             "chat_id": c.id,
@@ -86,7 +87,7 @@ async def user_groups(telegram_id: int, session: AsyncSession = Depends(get_sess
             "manager_name": names.get(c.manager_staff_id),
             "message_count": len(msgs),
             "last_message": last,
-            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            "updated_at": iso_utc(c.updated_at),
         })
     return out
 
@@ -123,7 +124,7 @@ async def get_pinned(chat_id: int, session: AsyncSession = Depends(get_session))
             "content": m.content,
             "sender_type": m.sender_type,
             "message_type": m.message_type,
-            "created_at": m.created_at.isoformat(),
+            "created_at": iso_utc(m.created_at),
         }
         for m in messages
     ]
@@ -176,7 +177,7 @@ async def clear_chat(data: ClearChatIn, session: AsyncSession = Depends(get_sess
             "sender_name": "Система",
             "content": sys_msg.content,
             "message_type": "system",
-            "created_at": sys_msg.created_at.isoformat(),
+            "created_at": iso_utc(sys_msg.created_at),
         })
     else:
         # AI chat — no staff side, just move the cutoff to now.

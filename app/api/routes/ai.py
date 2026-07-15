@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.config import settings
 from app.db import crud
@@ -37,29 +38,43 @@ def _api_configured() -> bool:
     return bool(key) and key != "your_authorization_key_here"
 
 
+def _user_turn_text(m) -> str:
+    """Текст реплики пользователя так, как её должен увидеть ИИ.
+
+    Ключевой момент: у медиа-сообщений `content` — НЕ текст. У голосовых там
+    лежит длительность в секундах (см. ai_media), у старых картинок — подпись.
+    Настоящая подпись всегда в `caption`. Раньше длительность уходила в модель
+    как реплика пользователя, и ИИ отвечал на «14» вместо вопроса.
+    """
+    caption = (m.caption or "").strip()
+
+    if m.message_type == MessageType.voice:
+        # content == длительность в секундах → в модель не отдаём никогда.
+        return caption or "[голосовое сообщение]"
+    if m.message_type == MessageType.image:
+        # Легаси: до появления `caption` подпись к фото хранилась в `content`.
+        return caption or (m.content or "").strip() or "[изображение]"
+    if m.message_type in (MessageType.video, MessageType.audio, MessageType.document):
+        return caption or f"[{m.message_type.value}]"
+    return (m.content or "").strip()
+
+
 def build_messages(history: list, current: Optional[dict] = None) -> list:
     """Build the GigaChat messages array from chat history.
 
-    History items use simple text; `current` may be a richer message (e.g. an
-    image attachment) that replaces the last user turn.
+    History items use simple text; `current` is a richer message (e.g. an image
+    attachment) appended as the final user turn — callers exclude it from
+    `history` themselves.
     """
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in history[-20:]:
         if m.sender_type == SenderType.user:
-            text = m.content or ""
-            if m.message_type == MessageType.voice:
-                text = m.content or "[голосовое сообщение]"
-            elif m.message_type == MessageType.image:
-                text = m.content or "[изображение]"
-            msgs.append({"role": "user", "content": text})
+            msgs.append({"role": "user", "content": _user_turn_text(m)})
         elif m.sender_type == SenderType.ai:
             msgs.append({"role": "assistant", "content": m.content or ""})
 
     if current:
-        if msgs and msgs[-1]["role"] == "user":
-            msgs[-1] = current
-        else:
-            msgs.append(current)
+        msgs.append(current)
     return msgs
 
 
@@ -75,7 +90,7 @@ async def _broadcast_done(chat_id: int, ai_msg, content: str):
         "sender_name": "ИИ-Советник",
         "content": content,
         "message_type": "text",
-        "created_at": ai_msg.created_at.isoformat(),
+        "created_at": iso_utc(ai_msg.created_at),
     }
     await manager.broadcast_to_chat(chat_id, {"type": "ai_done", **payload})
     # Mirror to owners for live oversight ("Чаты с ИИ").
@@ -165,7 +180,7 @@ async def ai_chat(
         "sender_type": "user",
         "content": data.user_message,
         "message_type": "text",
-        "created_at": user_msg.created_at.isoformat(),
+        "created_at": iso_utc(user_msg.created_at),
     }
     await manager.broadcast_to_chat(data.chat_id, user_payload)
     await manager.broadcast_to_owners(user_payload)  # live oversight
@@ -251,7 +266,7 @@ async def ai_media(
         "file_url": data.file_url,
         "file_name": data.file_name,
         "file_size": data.file_size,
-        "created_at": user_msg.created_at.isoformat(),
+        "created_at": iso_utc(user_msg.created_at),
     }
     await manager.broadcast_to_chat(data.chat_id, media_payload)
     await manager.broadcast_to_owners(media_payload)  # live oversight

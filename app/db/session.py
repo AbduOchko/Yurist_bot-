@@ -55,6 +55,18 @@ async def create_tables():
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS caption TEXT;"
         ))
 
+        # ── Фантомное «изм.»: раньше messages.updated_at проставлялся прямо при
+        # вставке (default=utcnow) и расходился с created_at на микросекунды, из-за
+        # чего фронт помечал редактированием каждое сообщение. Теперь колонка
+        # NULL до реальной правки (см. models.Message), а старые строки чистим:
+        # правка человеком не укладывается в 2 секунды после отправки, поэтому
+        # всё, что ближе, — заведомо ложная отметка. Идемпотентно.
+        await conn.execute(text(
+            "UPDATE messages SET updated_at = NULL "
+            "WHERE updated_at IS NOT NULL AND created_at IS NOT NULL "
+            "AND updated_at - created_at < INTERVAL '2 seconds';"
+        ))
+
         # ── Chat → Staff FK for lawyer assignment ─────────────────────
         await conn.execute(text(
             "ALTER TABLE chats ADD COLUMN IF NOT EXISTS lawyer_staff_id INTEGER "

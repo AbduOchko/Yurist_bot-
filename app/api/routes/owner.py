@@ -20,6 +20,7 @@ def _friendly_conflict(e: IntegrityError) -> str:
     return "Конфликт: значение уже занято"
 
 from app.api.security import hash_password, require_role
+from app.api.utils import iso_utc
 from app.db import crud
 from app.db.models import (
     Broadcast,
@@ -52,7 +53,7 @@ def _serialize_staff(s: Staff) -> dict:
         "telegram_id": s.telegram_id,
         "is_active": s.is_active,
         "is_online": s.is_online,
-        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "created_at": iso_utc(s.created_at),
     }
 
 
@@ -64,7 +65,7 @@ def _serialize_support_chat(c: Chat) -> dict:
         last_msg = {
             "content": lm.content,
             "sender_type": lm.sender_type.value if lm.sender_type else None,
-            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+            "created_at": iso_utc(lm.created_at),
         }
     return {
         "id": c.id,
@@ -79,7 +80,7 @@ def _serialize_support_chat(c: Chat) -> dict:
         },
         "message_count": len(non_deleted),
         "last_message": last_msg,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        "updated_at": iso_utc(c.updated_at),
     }
 
 
@@ -120,7 +121,7 @@ def _serialize_oversight_chat(c: Chat, names: dict) -> dict:
             "content": lm.content,
             "sender_type": lm.sender_type.value if lm.sender_type else None,
             "sender_name": lm.sender_name,
-            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+            "created_at": iso_utc(lm.created_at),
         }
     u = c.user
     return {
@@ -139,7 +140,7 @@ def _serialize_oversight_chat(c: Chat, names: dict) -> dict:
         "manager_name": names.get(c.manager_staff_id),
         "message_count": len(non_deleted),
         "last_message": last,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        "updated_at": iso_utc(c.updated_at),
     }
 
 
@@ -223,14 +224,14 @@ async def list_support_users(
             non_deleted = [m for m in c.messages if not m.is_deleted]
             count = len(non_deleted)
             chat_id = c.id
-            updated = c.updated_at.isoformat() if c.updated_at else None
+            updated = iso_utc(c.updated_at)
             if non_deleted:
                 lm = non_deleted[-1]
                 last = {
                     "content": lm.content,
                     "caption": lm.caption,
                     "sender_type": lm.sender_type.value if lm.sender_type else None,
-                    "created_at": lm.created_at.isoformat() if lm.created_at else None,
+                    "created_at": iso_utc(lm.created_at),
                 }
         out.append({
             "user_id": u.id,
@@ -243,7 +244,7 @@ async def list_support_users(
             "message_count": count,
             "last_message": last,
             "updated_at": updated,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "created_at": iso_utc(u.created_at),
         })
     out.sort(key=lambda r: (r["updated_at"] or r["created_at"] or ""), reverse=True)
     return out
@@ -381,7 +382,7 @@ async def list_users(
             "last_name": u.last_name,
             "app_login": u.app_login,
             "photo_url": u.photo_url,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "created_at": iso_utc(u.created_at),
         }
         for u in users
     ]
@@ -673,8 +674,8 @@ async def list_broadcasts(
             "recipients_total": b.recipients_total,
             "recipients_sent": b.recipients_sent,
             "recipients_failed": b.recipients_failed,
-            "created_at": b.created_at.isoformat() if b.created_at else None,
-            "finished_at": b.finished_at.isoformat() if b.finished_at else None,
+            "created_at": iso_utc(b.created_at),
+            "finished_at": iso_utc(b.finished_at),
         }
         for b in result.scalars().all()
     ]

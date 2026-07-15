@@ -2,11 +2,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.db import crud
-from app.db.models import ChatType, MessageType, SenderType
+from app.db.models import ChatType, Message, MessageType, SenderType
 from app.db.session import get_session
 from app.services.subscription import verify_subscription
 
@@ -36,8 +39,8 @@ def serialize_message(m) -> dict:
         "is_pinned": m.is_pinned,
         "reply_to": reply,
         "forwarded_from_chat_type": m.forwarded_from_chat_type,
-        "created_at": m.created_at.isoformat(),
-        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+        "created_at": iso_utc(m.created_at),
+        "updated_at": iso_utc(m.updated_at),
     }
 
 
@@ -91,9 +94,19 @@ async def send_message(
         sender_name=data.sender_name,
         forwarded_from_chat_type=data.forwarded_from_chat_type,
     )
-    # Load reply_to if exists
+    # Перезапрашиваем сообщение вместе со связью: ниже serialize_message читает
+    # msg.reply_to, а ленивая загрузка в async-сессии падает с MissingGreenlet,
+    # когда исходного сообщения нет в identity map (в проде сессия своя на каждый
+    # запрос). refresh(msg, ["reply_to"]) тут не подходит — он лишь помечает связь
+    # устаревшей, и она всё равно грузится лениво.
+    # Раньше тут стоял session.get(type(msg).__class__, ...) — он передавал
+    # метакласс вместо модели Message и ронял 500-й на КАЖДОМ ответе-реплае.
     if msg.reply_to_id:
-        result = await session.get(type(msg).__class__, msg.reply_to_id)
+        msg = (await session.execute(
+            select(Message)
+            .options(selectinload(Message.reply_to))
+            .where(Message.id == msg.id)
+        )).scalar_one()
 
     payload = serialize_message(msg)
     await manager.broadcast_to_chat(data.chat_id, {"type": "message", **payload})
@@ -139,8 +152,6 @@ async def edit_message(
 @router.delete("/{message_id}")
 async def delete_message(message_id: int, session: AsyncSession = Depends(get_session)):
     # Get message first to find chat_id
-    from sqlalchemy import select
-    from app.db.models import Message
     result = await session.execute(select(Message).where(Message.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:

@@ -15,6 +15,7 @@ from app.api.security import (
     hash_password,
     require_role,
 )
+from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.db import crud
 from app.db.models import Chat, ChatType, MessageType, SenderType, Staff, StaffRole, User
@@ -33,7 +34,7 @@ def _serialize_chat(c: Chat) -> dict:
         last_msg = {
             "content": lm.content,
             "sender_type": lm.sender_type.value if lm.sender_type else None,
-            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+            "created_at": iso_utc(lm.created_at),
         }
     return {
         "id": c.id,
@@ -49,7 +50,7 @@ def _serialize_chat(c: Chat) -> dict:
         },
         "message_count": len(non_deleted),
         "last_message": last_msg,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        "updated_at": iso_utc(c.updated_at),
     }
 
 
@@ -66,7 +67,7 @@ def _serialize_message(m) -> dict:
         "file_url": m.file_url,
         "file_name": m.file_name,
         "file_size": m.file_size,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "created_at": iso_utc(m.created_at),
     }
 
 
@@ -79,7 +80,7 @@ def _serialize_lawyer(s: Staff) -> dict:
         "telegram_id": s.telegram_id,
         "is_active": s.is_active,
         "is_online": s.is_online,
-        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "created_at": iso_utc(s.created_at),
     }
 
 
@@ -161,7 +162,7 @@ async def send_chat_message(
         "sender_id": staff.id,
         "content": data.content,
         "message_type": "text",
-        "created_at": msg.created_at.isoformat(),
+        "created_at": iso_utc(msg.created_at),
     }
     await manager.broadcast_to_chat(chat_id, payload)
     await manager.broadcast_to_staff_for_chat(chat, payload)
@@ -322,7 +323,7 @@ async def assign_lawyer(
         "sender_name": "Система",
         "content": system_msg.content,
         "message_type": "system",
-        "created_at": system_msg.created_at.isoformat(),
+        "created_at": iso_utc(system_msg.created_at),
     }
     await manager.broadcast_to_chat(chat.id, payload)
     # Notify the assigned lawyer's WS so the new chat appears in their list
@@ -364,13 +365,13 @@ async def list_users_inbox(
             non_deleted = [m for m in c.messages if not m.is_deleted]
             count = len(non_deleted)
             chat_id = c.id
-            updated = c.updated_at.isoformat() if c.updated_at else None
+            updated = iso_utc(c.updated_at)
             if non_deleted:
                 lm = non_deleted[-1]
                 last = {
                     "content": lm.content,
                     "sender_type": lm.sender_type.value if lm.sender_type else None,
-                    "created_at": lm.created_at.isoformat() if lm.created_at else None,
+                    "created_at": iso_utc(lm.created_at),
                 }
         out.append({
             "user_id": u.id,
@@ -383,7 +384,7 @@ async def list_users_inbox(
             "message_count": count,
             "last_message": last,
             "updated_at": updated,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "created_at": iso_utc(u.created_at),
         })
 
     out.sort(key=lambda r: (r["updated_at"] or r["created_at"] or ""), reverse=True)
@@ -415,7 +416,7 @@ def _serialize_group(c: Chat, staff_by_id: dict) -> dict:
             "content": lm.content,
             "sender_type": lm.sender_type.value if lm.sender_type else None,
             "sender_name": lm.sender_name,
-            "created_at": lm.created_at.isoformat() if lm.created_at else None,
+            "created_at": iso_utc(lm.created_at),
         }
     lawyer = staff_by_id.get(c.lawyer_staff_id)
     mgr = staff_by_id.get(c.manager_staff_id)
@@ -436,7 +437,7 @@ def _serialize_group(c: Chat, staff_by_id: dict) -> dict:
         },
         "message_count": len(non_deleted),
         "last_message": last_msg,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        "updated_at": iso_utc(c.updated_at),
     }
 
 
@@ -523,7 +524,7 @@ async def create_group(
         "sender_name": "Система",
         "content": sys_msg.content,
         "message_type": "system",
-        "created_at": sys_msg.created_at.isoformat(),
+        "created_at": iso_utc(sys_msg.created_at),
     }
     await manager.broadcast_to_chat(chat.id, payload)
     await manager.broadcast_to_staff_for_chat(chat, payload)

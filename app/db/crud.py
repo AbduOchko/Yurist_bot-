@@ -81,9 +81,14 @@ async def get_messages(
     # до неё (используется только на стороне пользователя/ИИ, не для персонала).
     if after is not None:
         q = q.where(Message.created_at > after)
-    q = q.order_by(Message.created_at.asc()).limit(limit).offset(offset)
+    # Берём limit САМЫХ СВЕЖИХ сообщений (offset листает вглубь истории), а
+    # отдаём в хронологическом порядке. ASC+LIMIT возвращал бы самые старые:
+    # переписка длиннее limit «замерзала» на первых сообщениях, и ни новые
+    # реплики пользователя, ни контекст ИИ дальше них не уезжали.
+    # id — тай-брейк на случай одинаковых created_at.
+    q = q.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit).offset(offset)
     result = await session.execute(q)
-    return list(result.scalars().all())
+    return list(reversed(result.scalars().all()))
 
 
 async def create_message(

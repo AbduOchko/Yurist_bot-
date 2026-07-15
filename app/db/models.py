@@ -123,7 +123,12 @@ class Message(Base):
     reply_to_id = Column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     forwarded_from_chat_type = Column(Enum(ChatType), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # NULL, пока сообщение не отредактировали, — проставляется только в
+    # crud.edit_message. Раньше здесь были default+onupdate: default вызывал
+    # datetime.utcnow() отдельно от created_at (расходились на микросекунды →
+    # фронт рисовал «изм.» на всём подряд), а onupdate срабатывал ещё и на
+    # закрепление/удаление, помечая их как редактирование.
+    updated_at = Column(DateTime, nullable=True)
 
     chat = relationship("Chat", back_populates="messages")
     reply_to = relationship("Message", remote_side="Message.id", foreign_keys=[reply_to_id])
