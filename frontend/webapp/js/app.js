@@ -23,8 +23,28 @@ if (tg) {
   tg.BackButton.hide();
 }
 
+// Стабильный id для случая, когда приложение открыто ВНЕ Telegram (например, в
+// браузере при отладке). Внутри Telegram всегда берётся настоящий
+// initDataUnsafe.user.id. Раньше тут стояла общая константа 100000001 — из-за
+// неё ВСЕ, кто вне Telegram, становились одним пользователем: первый
+// регистрировал аккаунт и занимал этот telegram_id, а у остальных на ЛЮБОЙ
+// новый логин выскакивало «Аккаунт уже существует» (проверка идёт по
+// telegram_id, а не по логину). Теперь каждый браузер получает свой id,
+// сохранённый в localStorage; app.js и chat.js читают один и тот же ключ.
+const FALLBACK_TGID_KEY = 'yurist_fallback_tgid';
+function fallbackTgId() {
+  let id = localStorage.getItem(FALLBACK_TGID_KEY);
+  if (!id) {
+    // Диапазон 10^11..10^12 — выше пространства реальных Telegram ID, чтобы
+    // тестовый пользователь не пересёкся с настоящим.
+    id = String(Math.floor(1e11 + Math.random() * 9e11));
+    localStorage.setItem(FALLBACK_TGID_KEY, id);
+  }
+  return parseInt(id, 10);
+}
+
 const TG_USER = tg?.initDataUnsafe?.user || null;
-const TG_ID   = TG_USER?.id || 100000001;
+const TG_ID   = TG_USER?.id || fallbackTgId();
 
 const AUTH_TOKEN_KEY = 'yurist_auth_token';
 const AUTH_LOGIN_KEY = 'yurist_auth_login';

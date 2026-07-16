@@ -25,6 +25,20 @@ if (tg) {
   tg.BackButton.onClick(() => leaveChat());
 }
 
+// Per-browser id для запуска вне Telegram — дублирует хелпер из app.js с тем же
+// ключом localStorage (общего модуля в проекте нет, chat.html грузит только
+// chat.js). Внутри Telegram не используется. Ключ обязан совпадать с app.js,
+// иначе экран входа и чат увидят разных пользователей.
+const FALLBACK_TGID_KEY = 'yurist_fallback_tgid';
+function fallbackTgId() {
+  let id = localStorage.getItem(FALLBACK_TGID_KEY);
+  if (!id) {
+    id = String(Math.floor(1e11 + Math.random() * 9e11));
+    localStorage.setItem(FALLBACK_TGID_KEY, id);
+  }
+  return parseInt(id, 10);
+}
+
 // Плавный выход из чата
 function leaveChat() {
   const page = document.querySelector('.chat-page');
@@ -138,8 +152,9 @@ async function init() {
   $statusTxt.textContent = cfg.status;
   setChatAvatar(CHAT_TYPE);
 
-  // Fallback user when not inside Telegram
-  USER = tg?.initDataUnsafe?.user || { id: 100000001, first_name: 'Гость', username: null, last_name: null };
+  // Fallback user when not inside Telegram — тот же per-browser id, что и на
+  // экране входа (app.js), иначе аккаунт и его чаты разъедутся. Ключ общий.
+  USER = tg?.initDataUnsafe?.user || { id: fallbackTgId(), first_name: 'Гость', username: null, last_name: null };
   USER_ID_INT = USER.id;
 
   $list.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
