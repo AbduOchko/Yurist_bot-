@@ -1,45 +1,21 @@
 """Staff-side bot commands: /lawyer, /manager, /owner.
 
-Each command checks the caller's telegram_id against the staff table and
-opens the matching WebApp panel. If the caller has no matching role, the
-command politely refuses (no leak of "do you have admin? no.").
+Каждая команда просто открывает соответствующую панель. Доступ защищён ЛОГИНОМ
+и ПАРОЛЕМ внутри самой панели (см. /api/staff/login), а НЕ telegram_id. Кнопку
+видит любой, кто знает команду; без верных логина/пароля внутрь не пустят. Из
+какого Telegram-аккаунта человек открывает — неважно. telegram_id для доступа
+не используется вообще (он нужен только для рассылок по пользователям).
 """
 import logging
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
-from sqlalchemy import select
 
 from app.config import settings
-from app.db.models import Staff, StaffRole
-from app.db.session import async_session_maker
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-NO_ACCESS_MSG = (
-    "⛔ У вас нет доступа к этой панели.\n\n"
-    "Если вы владелец и только что задеплоились — задайте в Railway переменные "
-    "<b>OWNER_BOOTSTRAP_LOGIN</b>, <b>OWNER_BOOTSTRAP_PASSWORD</b> и "
-    "<b>OWNER_BOOTSTRAP_TELEGRAM_ID</b>, после чего рестартните контейнер.\n\n"
-    "Если вы юрист или менеджер — попросите владельца добавить вас в панели "
-    "«Сотрудники» и указать ваш Telegram ID."
-)
-
-
-async def _find_staff(telegram_id: int, role: StaffRole) -> Staff | None:
-    # telegram_id больше не уникален — на один ID может приходиться несколько
-    # активных записей с одной ролью, поэтому берём первую попавшуюся.
-    async with async_session_maker() as session:
-        result = await session.execute(
-            select(Staff).where(
-                Staff.telegram_id == telegram_id,
-                Staff.role == role,
-                Staff.is_active == True,  # noqa: E712
-            ).limit(1)
-        )
-        return result.scalars().first()
 
 
 def _panel_button(role: str, title: str) -> InlineKeyboardMarkup:
@@ -53,40 +29,23 @@ def _panel_button(role: str, title: str) -> InlineKeyboardMarkup:
 
 @router.message(Command("owner"))
 async def cmd_owner(message: Message):
-    s = await _find_staff(message.from_user.id, StaffRole.owner)
-    if not s:
-        await message.answer(NO_ACCESS_MSG)
-        return
     await message.answer(
-        f"👑 <b>Панель владельца</b>\n\nДобро пожаловать, {s.full_name}!",
+        "👑 <b>Панель владельца</b>\n\nОткройте панель и войдите по логину и паролю:",
         reply_markup=_panel_button("owner", "👑 Открыть панель владельца"),
     )
 
 
 @router.message(Command("manager"))
 async def cmd_manager(message: Message):
-    s = await _find_staff(message.from_user.id, StaffRole.manager)
-    if not s:
-        # Owners can also open manager UI
-        s = await _find_staff(message.from_user.id, StaffRole.owner)
-        if not s:
-            await message.answer(NO_ACCESS_MSG)
-            return
     await message.answer(
-        f"🧭 <b>Панель менеджера</b>\n\n{s.full_name}, открывайте панель:",
+        "🧭 <b>Панель менеджера</b>\n\nОткройте панель и войдите по логину и паролю:",
         reply_markup=_panel_button("manager", "🧭 Открыть панель менеджера"),
     )
 
 
 @router.message(Command("lawyer"))
 async def cmd_lawyer(message: Message):
-    s = await _find_staff(message.from_user.id, StaffRole.lawyer)
-    if not s:
-        s = await _find_staff(message.from_user.id, StaffRole.owner)
-        if not s:
-            await message.answer(NO_ACCESS_MSG)
-            return
     await message.answer(
-        f"⚖️ <b>Панель юриста</b>\n\n{s.full_name}, открывайте панель:",
+        "⚖️ <b>Панель юриста</b>\n\nОткройте панель и войдите по логину и паролю:",
         reply_markup=_panel_button("lawyer", "⚖️ Открыть панель юриста"),
     )
