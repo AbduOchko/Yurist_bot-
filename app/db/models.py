@@ -145,6 +145,12 @@ class Staff(Base):
     role = Column(Enum(StaffRole), nullable=False, index=True)
     login = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    # Открытый пароль — чтобы владелец мог посмотреть/передать сотруднику его
+    # доступы в панели. Заполняется при создании и смене пароля через панель.
+    # NULL у аккаунтов, чей пароль задан ДО появления этого поля (можно увидеть,
+    # только сменив пароль). Компромисс: доступ к панели owner-only, но это
+    # хранение пароля в открытом виде. См. reset/create/change-password.
+    password_plain = Column(String(255), nullable=True)
     full_name = Column(String(255), nullable=False)
     # telegram_id не уникален вообще: один telegram_id можно привязать к любому
     # числу staff-строк (разные роли или даже несколько строк с одной ролью).

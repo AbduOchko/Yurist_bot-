@@ -101,7 +101,8 @@
       <div class="toolbar">
         <button class="btn-primary" style="width:auto;padding:10px 18px" id="addStaffBtn">+ Добавить сотрудника</button>
       </div>
-      <div class="data-list" id="staffList"></div>
+      <input id="staffSearch" class="form-input staff-search" placeholder="🔍 Поиск по имени или логину"/>
+      <div class="staff-accordion" id="staffList"></div>
     </div>
 
     <div class="app-panel" id="tab-chats">
@@ -196,7 +197,7 @@
     <div class="form-group"><label class="form-label">Логин</label><input id="stLogin" class="form-input"/></div>
     <div class="form-group"><label class="form-label">Пароль (мин. 8)</label><input id="stPassword" class="form-input" type="password"/></div>
     <div class="form-group"><label class="form-label">Специализация (для юриста)</label><input id="stSpec" class="form-input"/></div>
-    <div class="form-group"><label class="form-label">Telegram ID (для команд /lawyer, /manager, /owner)</label><input id="stTgId" class="form-input" type="number"/></div>
+    <div class="form-group"><label class="form-label">Telegram ID (необязательно — на доступ не влияет)</label><input id="stTgId" class="form-input" type="number"/></div>
     <div class="form-error" id="stError"></div>
     <div class="modal-footer">
       <button class="btn-secondary" id="stCancel">Отмена</button>
@@ -222,13 +223,31 @@
 <!-- Modal: reset staff password -->
 <div id="resetPwdModal" class="modal hidden">
   <div class="modal-card">
-    <div class="modal-title">Сброс пароля сотрудника</div>
+    <div class="modal-title">Сменить пароль сотрудника</div>
     <div id="resetPwdSub" style="margin-bottom:12px;color:var(--text-secondary);font-size:13px"></div>
-    <div class="form-group"><label class="form-label">Новый пароль (мин. 8)</label><input id="resetPwdNew" class="form-input" type="password"/></div>
+    <div class="form-group">
+      <label class="form-label">Новый пароль (мин. 8)</label>
+      <input id="resetPwdNew" class="form-input" type="text" autocomplete="off"/>
+    </div>
+    <button class="btn-secondary" id="resetPwdGen" style="width:auto;padding:8px 14px;margin-bottom:8px">🎲 Сгенерировать надёжный</button>
     <div class="form-error" id="resetPwdError"></div>
     <div class="modal-footer">
       <button class="btn-secondary" id="resetPwdCancel">Отмена</button>
-      <button class="btn-primary" style="width:auto;padding:10px 18px" id="resetPwdSave">Сбросить</button>
+      <button class="btn-primary" style="width:auto;padding:10px 18px" id="resetPwdSave">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: change staff login -->
+<div id="loginModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-title">Изменить логин</div>
+    <div id="loginModalSub" style="margin-bottom:12px;color:var(--text-secondary);font-size:13px"></div>
+    <div class="form-group"><label class="form-label">Новый логин (мин. 3)</label><input id="newLoginInput" class="form-input" autocomplete="off"/></div>
+    <div class="form-error" id="loginModalError"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="loginModalCancel">Отмена</button>
+      <button class="btn-primary" style="width:auto;padding:10px 18px" id="loginModalSave">Сохранить</button>
     </div>
   </div>
 </div>

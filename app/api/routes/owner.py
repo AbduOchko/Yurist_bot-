@@ -48,6 +48,9 @@ def _serialize_staff(s: Staff) -> dict:
         "id": s.id,
         "role": s.role.value,
         "login": s.login,
+        # Открытый пароль (owner-only эндпоинт). None → задан до появления поля,
+        # виден только после смены пароля через панель.
+        "password_plain": s.password_plain,
         "full_name": s.full_name,
         "specialization": s.specialization,
         "telegram_id": s.telegram_id,
@@ -453,6 +456,7 @@ async def create_staff(
         role=role,
         login=data.login.strip(),
         password_hash=hash_password(data.password),
+        password_plain=data.password,  # чтобы владелец видел/передал доступы
         full_name=data.full_name.strip(),
         specialization=data.specialization,
         telegram_id=data.telegram_id,
@@ -470,6 +474,7 @@ async def create_staff(
 
 class UpdateStaffIn(BaseModel):
     full_name: Optional[str] = None
+    login: Optional[str] = None
     specialization: Optional[str] = None
     telegram_id: Optional[int] = None
     is_active: Optional[bool] = None
@@ -488,6 +493,17 @@ async def update_staff(
         raise HTTPException(status_code=404, detail="Не найден")
     if data.full_name is not None:
         target.full_name = data.full_name.strip()
+    if data.login is not None:
+        new_login = data.login.strip()
+        if len(new_login) < 3:
+            raise HTTPException(status_code=400, detail="Логин минимум 3 символа")
+        # Логин уникален; проверяем, что его не занял ДРУГОЙ сотрудник.
+        clash = (await session.execute(
+            select(Staff).where(Staff.login == new_login, Staff.id != staff_id)
+        )).scalar_one_or_none()
+        if clash:
+            raise HTTPException(status_code=409, detail="Логин уже занят")
+        target.login = new_login
     if data.specialization is not None:
         target.specialization = data.specialization
     if data.telegram_id is not None:
@@ -496,7 +512,11 @@ async def update_staff(
         target.is_active = data.is_active
         if not data.is_active:
             target.session_token = None
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as e:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=_friendly_conflict(e))
     await session.refresh(target)
     return _serialize_staff(target)
 
@@ -519,9 +539,10 @@ async def reset_staff_password(
     if not target:
         raise HTTPException(status_code=404, detail="Не найден")
     target.password_hash = hash_password(data.new_password)
+    target.password_plain = data.new_password  # чтобы владелец видел новый пароль
     target.session_token = None  # force re-login
     await session.commit()
-    return {"ok": True}
+    return {"ok": True, "password_plain": data.new_password}
 
 
 @router.delete("/staff/{staff_id}")

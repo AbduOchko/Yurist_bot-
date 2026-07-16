@@ -96,6 +96,7 @@ async def staff_change_password(
         raise HTTPException(status_code=400, detail="Новый пароль минимум 8 символов")
 
     staff.password_hash = hash_password(data.new_password)
+    staff.password_plain = data.new_password  # чтобы владелец видел актуальный пароль
     staff.session_token = new_token()  # invalidate other sessions
     await session.commit()
     return {"ok": True, "token": staff.session_token}

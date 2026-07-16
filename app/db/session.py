@@ -112,6 +112,11 @@ async def create_tables():
             "CREATE INDEX IF NOT EXISTS ix_staff_telegram_id ON staff (telegram_id);"
         ))
 
+        # ── Открытый пароль сотрудника — чтобы владелец видел/передавал доступы.
+        await conn.execute(text(
+            "ALTER TABLE staff ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255);"
+        ))
+
         # ── Orphaned-broadcast cleanup: anything still 'sending' after
         # a server restart is stuck; flip to 'failed' so it doesn't lie.
         await conn.execute(text(
@@ -190,6 +195,7 @@ async def bootstrap_owner():
                 role=StaffRole.owner,
                 login=login_base,
                 password_hash=pwd_hash,
+                password_plain=password,
                 full_name="Владелец",
                 is_active=True,
             )
@@ -228,6 +234,7 @@ async def bootstrap_owner():
                 role=StaffRole.owner,
                 login=candidate,
                 password_hash=pwd_hash,
+                password_plain=password,
                 full_name="Владелец",
                 telegram_id=telegram_id,
                 is_active=True,

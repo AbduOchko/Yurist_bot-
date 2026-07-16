@@ -257,3 +257,73 @@
 .sup-chatview .ow-messages { height: calc(100dvh - 300px); }
 #supList { animation: fade-in 300ms ease-out; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Сотрудники: аккордеон «должность + имя» → детали ─────────────── */
+.staff-search { width: 100%; margin-bottom: 12px; }
+.staff-accordion { display: flex; flex-direction: column; gap: 8px; }
+.staff-empty { padding: 24px; text-align: center; color: var(--text-secondary); }
+
+.staff-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.staff-item.open { border-color: var(--border-hover); }
+.staff-item.inactive { opacity: 0.55; }
+
+.staff-head {
+  width: 100%;
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 15px;
+  background: none; border: none; cursor: pointer;
+  text-align: left; color: var(--text); font-family: inherit;
+}
+.staff-head:hover { background: var(--bg-card-hover); }
+.staff-head:active { opacity: 0.9; }
+
+.staff-badge {
+  width: 38px; height: 38px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-full); font-size: 18px;
+  background: var(--accent-dim);
+}
+.staff-badge.role-owner   { background: rgba(255, 159, 10, 0.16); }
+.staff-badge.role-manager { background: rgba(52, 199, 89, 0.14); }
+.staff-badge.role-lawyer  { background: rgba(37, 99, 235, 0.16); }
+
+.staff-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.staff-head-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.staff-head-role { font-size: 12px; color: var(--text-secondary); }
+.staff-you { font-size: 11px; color: var(--accent-hover); font-weight: 600; margin-left: 4px; }
+
+.staff-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-secondary); opacity: 0.4; flex-shrink: 0; }
+.staff-dot.on { background: var(--success); opacity: 1; box-shadow: 0 0 8px rgba(52, 199, 89, 0.6); }
+
+.staff-chevron { color: var(--text-secondary); font-size: 12px; flex-shrink: 0; transition: transform 0.2s; }
+.staff-item.open .staff-chevron { transform: rotate(180deg); }
+
+.staff-detail { display: none; flex-direction: column; gap: 2px; padding: 2px 15px 15px; border-top: 1px solid var(--border); }
+.staff-item.open .staff-detail { display: flex; animation: staffFade 0.18s ease; }
+@keyframes staffFade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.staff-kv { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.staff-kv:last-of-type { border-bottom: none; }
+.staff-k { width: 96px; flex-shrink: 0; font-size: 12px; color: var(--text-secondary); }
+.staff-v { flex: 1; min-width: 0; font-size: 14px; word-break: break-all; user-select: text; }
+.staff-v.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.3px; }
+.staff-hidden { color: var(--text-secondary); font-style: italic; font-size: 13px; }
+
+.staff-copy {
+  flex-shrink: 0; width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  cursor: pointer; font-size: 14px;
+}
+.staff-copy:hover { border-color: var(--accent); color: var(--accent-hover); }
+
+.staff-copyboth { width: 100%; margin-top: 8px; }
+.staff-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.staff-actions button { flex: 1 1 130px; padding: 10px 12px; }

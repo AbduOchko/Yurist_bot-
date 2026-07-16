@@ -303,62 +303,157 @@ async function loadUsers() {
 }
 
 // ── Staff ─────────────────────────────────────
+// ── Сотрудники: аккордеон «должность + имя» → детали (логин/пароль/действия) ──
+const STAFF_ROLE_META = { owner: ['👑', 'Владелец'], manager: ['🧭', 'Менеджер'], lawyer: ['⚖️', 'Юрист'] };
+let STAFF_CACHE = [];
+let STAFF_OPEN_ID = null;   // какой сотрудник сейчас раскрыт
+let LOGIN_STAFF_ID = null;  // для модалки смены логина
+
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg || 'Скопировано');
+  } catch {
+    // Фолбэк для окружений без clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); showToast(okMsg || 'Скопировано'); }
+    catch { showToast('Не удалось скопировать'); }
+    document.body.removeChild(ta);
+  }
+}
+
+function genPassword(len = 12) {
+  const abc = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';  // без похожих 0/O/1/l
+  const arr = new Uint32Array(len);
+  (window.crypto?.getRandomValues) ? crypto.getRandomValues(arr)
+                                   : arr.forEach((_, i) => arr[i] = Math.floor(Math.random() * 4294967296));
+  let out = '';
+  for (let i = 0; i < len; i++) out += abc[arr[i] % abc.length];
+  return out;
+}
+
 async function loadStaff() {
   try {
-    const list = await api('GET', '/api/owner/staff');
-    const wrap = $('staffList');
-    if (!list.length) { wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-secondary)">Нет сотрудников</div>'; return; }
-    wrap.innerHTML = '';
-    const roleLabel = { owner: '👑 Владелец', manager: '🧭 Менеджер', lawyer: '⚖️ Юрист' };
-    for (const s of list) {
-      const r = document.createElement('div');
-      r.className = 'data-row';
-      if (!s.is_active) r.style.opacity = '0.5';
-      const isSelf = s.id === ME.id;
-      let actionsHtml = `<button class="btn-secondary" data-act="reset" data-id="${s.id}" data-name="${escapeHtml(s.full_name)}">Сменить пароль</button>`;
-      if (!isSelf) {
-        if (s.is_active) {
-          actionsHtml += `<button class="btn-danger" data-act="disable" data-id="${s.id}">Отключить</button>`;
-        } else {
-          actionsHtml += `<button class="btn-secondary" data-act="enable" data-id="${s.id}">Включить</button>`;
-          actionsHtml += `<button class="btn-danger" data-act="del" data-id="${s.id}" data-name="${escapeHtml(s.full_name)}">Удалить</button>`;
-        }
-      }
-      r.innerHTML = `
-        <div class="grow">
-          <div class="data-name">${escapeHtml(s.full_name)} · ${roleLabel[s.role] || s.role}</div>
-          <div class="data-sub">@${escapeHtml(s.login)} · ${escapeHtml(s.specialization || '')} · TG ${s.telegram_id || '—'} · ${s.is_online ? '🟢' : '⚫'}${!s.is_active ? ' · ❌ отключён' : ''}</div>
-        </div>
-        <div class="data-actions">${actionsHtml}</div>
-      `;
-      r.querySelectorAll('button').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const id = parseInt(btn.dataset.id);
-          const act = btn.dataset.act;
-          if (act === 'reset') {
-            RESET_STAFF_ID = id;
-            $('resetPwdSub').textContent = `Сотрудник: ${btn.dataset.name}`;
-            $('resetPwdNew').value = '';
-            $('resetPwdError').textContent = '';
-            $('resetPwdModal').classList.remove('hidden');
-          } else if (act === 'disable') {
-            if (!confirm('Отключить сотрудника? Он потеряет доступ к панели, но останется в списке — позже можно включить обратно или удалить.')) return;
-            try { await api('PATCH', `/api/owner/staff/${id}`, { is_active: false }); loadStaff(); showToast('Сотрудник отключён'); }
-            catch (e) { showToast(e.message); }
-          } else if (act === 'enable') {
-            try { await api('PATCH', `/api/owner/staff/${id}`, { is_active: true }); loadStaff(); showToast('Сотрудник включён'); }
-            catch (e) { showToast(e.message); }
-          } else if (act === 'del') {
-            if (!confirm(`Удалить сотрудника "${btn.dataset.name}" навсегда? Действие необратимо, его чаты вернутся в общий пул.`)) return;
-            try { await api('DELETE', `/api/owner/staff/${id}`); loadStaff(); showToast('Сотрудник удалён'); }
-            catch (e) { showToast(e.message); }
-          }
-        });
-      });
-      wrap.appendChild(r);
-    }
+    STAFF_CACHE = await api('GET', '/api/owner/staff');
+    renderStaffList();
   } catch (e) { showToast(e.message); }
 }
+
+function renderStaffList() {
+  const wrap = $('staffList');
+  const q = ($('staffSearch')?.value || '').trim().toLowerCase();
+  let list = q
+    ? STAFF_CACHE.filter(s => (s.full_name || '').toLowerCase().includes(q) || (s.login || '').toLowerCase().includes(q))
+    : STAFF_CACHE.slice();
+  if (!list.length) {
+    wrap.innerHTML = `<div class="staff-empty">${STAFF_CACHE.length ? 'Никого не найдено' : 'Нет сотрудников'}</div>`;
+    return;
+  }
+  const rank = { owner: 0, manager: 1, lawyer: 2 };
+  list.sort((a, b) => (rank[a.role] - rank[b.role]) || a.full_name.localeCompare(b.full_name, 'ru'));
+  wrap.innerHTML = '';
+  for (const s of list) wrap.appendChild(staffItemEl(s));
+}
+
+function staffItemEl(s) {
+  const [icon, roleName] = STAFF_ROLE_META[s.role] || ['·', s.role];
+  const isSelf = s.id === ME.id;
+  const open = s.id === STAFF_OPEN_ID;
+  const pwd = s.password_plain;
+
+  const item = document.createElement('div');
+  item.className = 'staff-item' + (open ? ' open' : '') + (s.is_active ? '' : ' inactive');
+
+  const head = document.createElement('button');
+  head.className = 'staff-head';
+  head.innerHTML = `
+    <span class="staff-badge role-${s.role}">${icon}</span>
+    <span class="staff-head-main">
+      <span class="staff-head-name">${escapeHtml(s.full_name)}${isSelf ? ' <span class="staff-you">вы</span>' : ''}</span>
+      <span class="staff-head-role">${roleName}${s.is_active ? '' : ' · отключён'}</span>
+    </span>
+    <span class="staff-dot ${s.is_online ? 'on' : ''}"></span>
+    <span class="staff-chevron">▾</span>`;
+  head.addEventListener('click', () => {
+    STAFF_OPEN_ID = open ? null : s.id;
+    renderStaffList();
+  });
+  item.appendChild(head);
+
+  const detail = document.createElement('div');
+  detail.className = 'staff-detail';
+  detail.innerHTML = `
+    <div class="staff-kv">
+      <span class="staff-k">Логин</span>
+      <span class="staff-v mono">${escapeHtml(s.login)}</span>
+      <button class="staff-copy" data-copy="${escapeHtml(s.login)}" title="Копировать">⧉</button>
+    </div>
+    <div class="staff-kv">
+      <span class="staff-k">Пароль</span>
+      ${pwd
+        ? `<span class="staff-v mono">${escapeHtml(pwd)}</span><button class="staff-copy" data-copy="${escapeHtml(pwd)}" title="Копировать">⧉</button>`
+        : `<span class="staff-v staff-hidden">скрыт · нажмите «Сменить пароль», чтобы задать</span>`}
+    </div>
+    ${s.role === 'lawyer' && s.specialization ? `<div class="staff-kv"><span class="staff-k">Специализация</span><span class="staff-v">${escapeHtml(s.specialization)}</span></div>` : ''}
+    <div class="staff-kv"><span class="staff-k">Статус</span><span class="staff-v">${s.is_online ? '🟢 онлайн' : '⚫ оффлайн'} · ${s.is_active ? 'активен' : '❌ отключён'}</span></div>
+    ${pwd ? `<button class="btn-secondary staff-copyboth">📋 Скопировать логин и пароль</button>` : ''}
+    <div class="staff-actions">
+      <button class="btn-secondary" data-act="login">✏️ Изменить логин</button>
+      <button class="btn-secondary" data-act="pwd">🔑 Сменить пароль</button>
+      ${!isSelf ? (s.is_active
+        ? `<button class="btn-danger" data-act="disable">Отключить</button>`
+        : `<button class="btn-secondary" data-act="enable">Включить</button>`) : ''}
+      ${!isSelf ? `<button class="btn-danger" data-act="del">🗑 Удалить</button>` : ''}
+    </div>`;
+
+  detail.querySelectorAll('.staff-copy').forEach(b =>
+    b.addEventListener('click', () => copyText(b.dataset.copy)));
+  const both = detail.querySelector('.staff-copyboth');
+  if (both) both.addEventListener('click', () => copyText(`Логин: ${s.login}\nПароль: ${pwd}`, 'Логин и пароль скопированы'));
+
+  detail.querySelectorAll('.staff-actions button').forEach(b => {
+    b.addEventListener('click', async () => {
+      const act = b.dataset.act;
+      if (act === 'login') { openLoginModal(s); return; }
+      if (act === 'pwd') { openResetModal(s); return; }
+      if (act === 'disable') {
+        if (!confirm('Отключить сотрудника? Он потеряет доступ к панели, но останется в списке — позже можно включить.')) return;
+        try { await api('PATCH', `/api/owner/staff/${s.id}`, { is_active: false }); await loadStaff(); showToast('Отключён'); }
+        catch (e) { showToast(e.message); }
+      } else if (act === 'enable') {
+        try { await api('PATCH', `/api/owner/staff/${s.id}`, { is_active: true }); await loadStaff(); showToast('Включён'); }
+        catch (e) { showToast(e.message); }
+      } else if (act === 'del') {
+        if (!confirm(`Удалить «${s.full_name}» навсегда? Действие необратимо, его чаты вернутся в общий пул.`)) return;
+        try { await api('DELETE', `/api/owner/staff/${s.id}`); STAFF_OPEN_ID = null; await loadStaff(); showToast('Удалён'); }
+        catch (e) { showToast(e.message); }
+      }
+    });
+  });
+
+  item.appendChild(detail);
+  return item;
+}
+
+function openResetModal(s) {
+  RESET_STAFF_ID = s.id;
+  $('resetPwdSub').textContent = `${s.full_name} · ${STAFF_ROLE_META[s.role]?.[1] || s.role}`;
+  $('resetPwdNew').value = '';
+  $('resetPwdError').textContent = '';
+  $('resetPwdModal').classList.remove('hidden');
+}
+
+function openLoginModal(s) {
+  LOGIN_STAFF_ID = s.id;
+  $('loginModalSub').textContent = `${s.full_name} · текущий логин: ${s.login}`;
+  $('newLoginInput').value = s.login;
+  $('loginModalError').textContent = '';
+  $('loginModal').classList.remove('hidden');
+}
+
+$('staffSearch').addEventListener('input', renderStaffList);
 
 $('addStaffBtn').addEventListener('click', () => {
   $('stRole').value = 'lawyer'; $('stName').value = ''; $('stLogin').value = '';
@@ -385,14 +480,34 @@ $('stSave').addEventListener('click', async () => {
 
 // Reset staff password modal
 $('resetPwdCancel').addEventListener('click', () => $('resetPwdModal').classList.add('hidden'));
+$('resetPwdGen').addEventListener('click', () => {
+  $('resetPwdNew').value = genPassword(12);
+  $('resetPwdError').textContent = '';
+});
 $('resetPwdSave').addEventListener('click', async () => {
   const pwd = $('resetPwdNew').value;
   if (pwd.length < 8) { $('resetPwdError').textContent = 'Минимум 8 символов'; return; }
   try {
     await api('POST', `/api/owner/staff/${RESET_STAFF_ID}/reset-password`, { new_password: pwd });
     $('resetPwdModal').classList.add('hidden');
-    showToast('Пароль сброшен');
+    STAFF_OPEN_ID = RESET_STAFF_ID;   // оставляем карточку раскрытой — виден новый пароль
+    await loadStaff();
+    showToast('Пароль изменён');
   } catch (e) { $('resetPwdError').textContent = e.message; }
+});
+
+// Change staff login modal
+$('loginModalCancel').addEventListener('click', () => $('loginModal').classList.add('hidden'));
+$('loginModalSave').addEventListener('click', async () => {
+  const v = $('newLoginInput').value.trim();
+  if (v.length < 3) { $('loginModalError').textContent = 'Минимум 3 символа'; return; }
+  try {
+    await api('PATCH', `/api/owner/staff/${LOGIN_STAFF_ID}`, { login: v });
+    $('loginModal').classList.add('hidden');
+    STAFF_OPEN_ID = LOGIN_STAFF_ID;
+    await loadStaff();
+    showToast('Логин изменён');
+  } catch (e) { $('loginModalError').textContent = e.message; }
 });
 
 // Change my own password
