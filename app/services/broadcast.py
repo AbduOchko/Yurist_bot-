@@ -50,10 +50,11 @@ async def run_broadcast(broadcast_id: int):
             logger.error(f"run_broadcast: row {broadcast_id} not found")
             return
 
-        # Gather recipient telegram_ids
+        # Gather recipient telegram_ids. distinct(): у одного человека может быть
+        # несколько учёток с одним telegram_id — иначе он получит рассылку дважды.
         users = (
             await session.execute(
-                select(User.telegram_id).where(User.telegram_id.isnot(None))
+                select(User.telegram_id).where(User.telegram_id.isnot(None)).distinct()
             )
         ).scalars().all()
 

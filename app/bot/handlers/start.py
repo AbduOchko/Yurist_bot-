@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
-from sqlalchemy import select
+from sqlalchemy import update
 
 from app.config import settings
 from app.db.crud import get_or_create_user
@@ -24,12 +24,14 @@ async def _save_user_photo(bot: Bot, telegram_id: int):
         file = await bot.get_file(file_id)
         photo_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{file.file_path}"
 
+        # Обновляем аватар во ВСЕХ учётках этого telegram_id (их может быть
+        # несколько), а не в одной — иначе scalar_one_or_none упал бы, а часть
+        # аккаунтов осталась бы без фото.
         async with async_session_maker() as session:
-            result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-            user = result.scalar_one_or_none()
-            if user:
-                user.photo_url = photo_url
-                await session.commit()
+            await session.execute(
+                update(User).where(User.telegram_id == telegram_id).values(photo_url=photo_url)
+            )
+            await session.commit()
     except Exception as e:
         logger.warning(f"Could not fetch profile photo for {telegram_id}: {e}")
 

@@ -13,7 +13,6 @@ from app.db.crud import (
     get_or_create_chat,
     get_chat_by_id,
     get_pinned_messages,
-    get_user_by_telegram_id,
 )
 from app.db.models import Chat, ChatType, MessageType, SenderType, Staff
 from app.db.session import get_session
@@ -51,15 +50,15 @@ async def _staff_names(session, *staff_ids):
 
 
 @router.get("/groups")
-async def user_groups(telegram_id: int, session: AsyncSession = Depends(get_session)):
-    """Group chats the user participates in — shown under the 3 main cards."""
-    user = await get_user_by_telegram_id(session, telegram_id)
-    if not user:
-        return []
+async def user_groups(user_id: int, session: AsyncSession = Depends(get_session)):
+    """Group chats the user participates in — shown under the 3 main cards.
+
+    Ключ — user_id вошедшей учётки (не telegram_id): у одного Telegram-аккаунта
+    может быть несколько учёток, у каждой свои группы."""
     chats = (await session.execute(
         select(Chat)
         .options(selectinload(Chat.messages))
-        .where(Chat.chat_type == ChatType.group, Chat.user_id == user.id)
+        .where(Chat.chat_type == ChatType.group, Chat.user_id == user_id)
         .order_by(Chat.updated_at.desc())
     )).scalars().all()
 
@@ -131,26 +130,22 @@ async def get_pinned(chat_id: int, session: AsyncSession = Depends(get_session))
 
 
 class ClearChatIn(BaseModel):
-    telegram_id: int
+    user_id: int
     chat_type: ChatType
 
 
 @router.post("/clear")
 async def clear_chat(data: ClearChatIn, session: AsyncSession = Depends(get_session)):
-    """Clear chat history for THIS user only.
+    """Clear chat history for THIS account only.
 
-    Sets a per-user cutoff (chat.user_cleared_at) — the user (and, for the AI
-    chat, the model's context) no longer sees anything before it, but the
-    messages stay in the DB and remain fully visible to staff. For staff-facing
-    chats a system note is added so the lawyer / manager / owner sees that the
-    user wiped their side.
+    Ключ — user_id вошедшей учётки (не telegram_id). Ставит персональную отсечку
+    (chat.user_cleared_at): пользователь (и, для ИИ-чата, контекст модели) больше
+    не видит ничего до неё, но сообщения остаются в БД и видны персоналу. Для
+    чатов с персоналом добавляется системная пометка, что пользователь очистил
+    свою сторону.
     """
-    user = await get_user_by_telegram_id(session, data.telegram_id)
-    if not user:
-        return {"ok": True, "cleared": False}
-
     result = await session.execute(
-        select(Chat).where(Chat.user_id == user.id, Chat.chat_type == data.chat_type)
+        select(Chat).where(Chat.user_id == data.user_id, Chat.chat_type == data.chat_type)
     )
     chat = result.scalar_one_or_none()
     if not chat:

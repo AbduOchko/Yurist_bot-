@@ -15,10 +15,14 @@ async def get_or_create_user(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
 ) -> User:
+    # На один telegram_id может приходиться несколько учёток → берём любую (первую)
+    # существующую, а не scalar_one_or_none (тот падал бы с MultipleResultsFound).
+    # Используется ботом на /start, чтобы у человека была хотя бы одна строка
+    # (для рассылок/фото) даже без регистрации через логин.
     result = await session.execute(
-        select(User).where(User.telegram_id == telegram_id)
+        select(User).where(User.telegram_id == telegram_id).order_by(User.id).limit(1)
     )
-    user = result.scalar_one_or_none()
+    user = result.scalars().first()
     if not user:
         user = User(
             telegram_id=telegram_id,
@@ -33,10 +37,11 @@ async def get_or_create_user(
 
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Optional[User]:
+    # limit(1): один telegram_id → возможно несколько учёток.
     result = await session.execute(
-        select(User).where(User.telegram_id == telegram_id)
+        select(User).where(User.telegram_id == telegram_id).order_by(User.id).limit(1)
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def get_or_create_chat(

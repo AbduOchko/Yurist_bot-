@@ -59,6 +59,15 @@ function leaveChat() {
     if (!res.ok) {
       localStorage.removeItem('yurist_auth_token');
       window.location.href = '/';
+    } else {
+      // Подстраховка: если id учётки не лежал в localStorage — возьмём из сессии.
+      try {
+        const v = await res.json();
+        if (v.user_id) {
+          ACCOUNT_ID = v.user_id;
+          localStorage.setItem('yurist_auth_uid', String(v.user_id));
+        }
+      } catch {}
     }
   } catch {}
 })();
@@ -98,7 +107,12 @@ const FORWARD_TARGETS = {
 
 // ── State ───────────────────────────────────
 let USER = null;
-let USER_ID_INT = null;
+let USER_ID_INT = null;   // telegram_id — для подписи отправителя, WS и проверки подписки
+// id вошедшей учётки (users.id) — по нему создаются/ищутся чаты. Один
+// Telegram-аккаунт может держать несколько учёток, поэтому именно ACCOUNT_ID,
+// а не telegram_id, определяет, чей это чат. Берём из сессии (app.js положил
+// его в localStorage при входе); если нет — дорезолвим через verify в init().
+let ACCOUNT_ID = parseInt(localStorage.getItem('yurist_auth_uid') || '0', 10) || null;
 let CHAT_ID = null;
 let ws = null;
 let messages = [];           // {id, sender_type, content, message_type, file_url, file_name, is_pinned, reply_to, created_at, updated_at}
@@ -145,6 +159,29 @@ const $mediaPreviewThumb = document.getElementById('mediaPreviewThumb');
 const $mediaPreviewTitle = document.getElementById('mediaPreviewTitle');
 const $mediaPreviewClose = document.getElementById('mediaPreviewClose');
 
+// Гарантирует, что ACCOUNT_ID (id вошедшей учётки) известен: если его не было
+// в localStorage (старая сессия) — берём из /api/auth/verify по токену.
+async function ensureAccountId() {
+  if (ACCOUNT_ID) return ACCOUNT_ID;
+  const token = localStorage.getItem('yurist_auth_token');
+  if (!token) return null;
+  try {
+    const res = await fetch('/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (res.ok) {
+      const v = await res.json();
+      if (v.user_id) {
+        ACCOUNT_ID = v.user_id;
+        localStorage.setItem('yurist_auth_uid', String(v.user_id));
+      }
+    }
+  } catch {}
+  return ACCOUNT_ID;
+}
+
 // ── Init ─────────────────────────────────────
 async function init() {
   const cfg = CHAT_CONFIG[CHAT_TYPE];
@@ -161,26 +198,14 @@ async function init() {
 
   try {
     if (FORCED_CHAT_ID) {
-      // Открыт конкретный чат по id (групповой). Регистрируем пользователя на
-      // всякий случай, но чат не пере-создаём — используем переданный id.
-      await api('POST', '/api/users/', {
-        telegram_id: USER_ID_INT,
-        username: USER.username || null,
-        first_name: USER.first_name || 'Гость',
-        last_name: USER.last_name || null,
-      });
+      // Открыт конкретный чат по id (групповой) — используем переданный id как есть.
       CHAT_ID = FORCED_CHAT_ID;
       if (CHAT_TYPE === 'group') await loadGroupInfo();
     } else {
-      const userRes = await api('POST', '/api/users/', {
-        telegram_id: USER_ID_INT,
-        username: USER.username || null,
-        first_name: USER.first_name || 'Гость',
-        last_name: USER.last_name || null,
-      });
-
+      // Чат принадлежит вошедшей учётке (users.id), а не telegram_id.
+      await ensureAccountId();
       const chatRes = await api('POST', '/api/chats/', {
-        user_id: userRes.id,
+        user_id: ACCOUNT_ID,
         chat_type: CHAT_TYPE,
       });
       CHAT_ID = chatRes.id;
@@ -1021,14 +1046,9 @@ async function forwardMessage(targetType) {
   $fwdModal.classList.add('hidden');
 
   try {
-    const userRes = await api('POST', '/api/users/', {
-      telegram_id: USER_ID_INT,
-      username: USER.username,
-      first_name: USER.first_name,
-      last_name: USER.last_name,
-    });
+    await ensureAccountId();
     const chatRes = await api('POST', '/api/chats/', {
-      user_id: userRes.id,
+      user_id: ACCOUNT_ID,
       chat_type: targetType,
     });
     await api('POST', '/api/messages/', {

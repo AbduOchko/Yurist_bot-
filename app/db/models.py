@@ -55,7 +55,11 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    # НЕ уникален: один Telegram-аккаунт может завести несколько независимых
+    # учёток в приложении (каждая — свой app_login со своими чатами). Идентичность
+    # аккаунта определяет app_login, а не telegram_id. Уникальный индекс,
+    # созданный из прежнего unique=True, снимается в session.create_tables.
+    telegram_id = Column(BigInteger, nullable=False, index=True)
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)

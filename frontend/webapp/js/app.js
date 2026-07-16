@@ -48,7 +48,12 @@ const TG_ID   = TG_USER?.id || fallbackTgId();
 
 const AUTH_TOKEN_KEY = 'yurist_auth_token';
 const AUTH_LOGIN_KEY = 'yurist_auth_login';
+const AUTH_UID_KEY   = 'yurist_auth_uid';    // users.id вошедшей учётки — по нему создаются чаты
 const AUTH_TS_KEY    = 'yurist_auth_ts';     // когда пользователь последний раз заходил
+
+// id вошедшей учётки в приложении (users.id). Именно он, а не telegram_id,
+// определяет, чьи это чаты: один Telegram-аккаунт может держать несколько учёток.
+let ACCOUNT_ID = parseInt(localStorage.getItem(AUTH_UID_KEY) || '0', 10) || null;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;     // авто-выход при неактивности > недели
 
 // ── DOM refs ──────────────────────────────
@@ -171,7 +176,7 @@ $loginBtn.addEventListener('click', async () => {
   setLoading($loginBtn, true, 'Войти');
   try {
     const data = await apiAuth('/api/auth/login', { telegram_id: TG_ID, login, password });
-    onAuthSuccess(data.token, data.login, data.photo_url);
+    onAuthSuccess(data.token, data.login, data.photo_url, data.user_id);
   } catch(e) {
     $loginError.textContent = e.message;
     $loginError.classList.add('show');
@@ -217,7 +222,7 @@ $registerBtn.addEventListener('click', async () => {
       last_name:  TG_USER?.last_name  || null,
       username:   TG_USER?.username   || null,
     });
-    onAuthSuccess(data.token, data.login, data.photo_url);
+    onAuthSuccess(data.token, data.login, data.photo_url, data.user_id);
   } catch(e) {
     $registerError.textContent = e.message;
     $registerError.classList.add('show');
@@ -231,9 +236,10 @@ document.getElementById('regPasswordConfirm').addEventListener('keydown', e => {
 });
 
 // ── Auth success ──────────────────────────
-function onAuthSuccess(token, login, photoUrl) {
+function onAuthSuccess(token, login, photoUrl, userId) {
   localStorage.setItem(AUTH_TOKEN_KEY, token);
   localStorage.setItem(AUTH_LOGIN_KEY, login);
+  if (userId) { localStorage.setItem(AUTH_UID_KEY, String(userId)); ACCOUNT_ID = userId; }
   localStorage.setItem(AUTH_TS_KEY, String(Date.now()));
   document.documentElement.classList.add('pre-authed');
   $authScreen.classList.add('hidden');
@@ -245,7 +251,9 @@ function onAuthSuccess(token, login, photoUrl) {
 function logout() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_LOGIN_KEY);
+  localStorage.removeItem(AUTH_UID_KEY);
   localStorage.removeItem(AUTH_TS_KEY);
+  ACCOUNT_ID = null;
   document.documentElement.classList.remove('pre-authed');
   location.reload();
 }
@@ -265,8 +273,9 @@ function escapeHtmlSafe(s) { return String(s ?? '').replace(/&/g, '&amp;').repla
 
 // ── Group chats (shown under the 3 main cards) ──
 async function loadGroups() {
+  if (!ACCOUNT_ID) return;   // группы принадлежат учётке, не telegram_id
   try {
-    const res = await fetch(`/api/chats/groups?telegram_id=${TG_ID}`);
+    const res = await fetch(`/api/chats/groups?user_id=${ACCOUNT_ID}`);
     if (!res.ok) return;
     renderGroupCards(await res.json());
   } catch {}
@@ -300,12 +309,13 @@ function renderGroupCards(groups) {
 
 // ── Clear chat history (only on the user's side) ──
 async function clearHistory(chatType, label) {
+  if (!ACCOUNT_ID) { showToast('Сначала войдите'); return; }
   if (!confirm(`Очистить историю «${label}»?\n\nУ вас она исчезнет, но у собеседника сохранится.`)) return;
   try {
     const res = await fetch('/api/chats/clear', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ telegram_id: TG_ID, chat_type: chatType }),
+      body: JSON.stringify({ user_id: ACCOUNT_ID, chat_type: chatType }),
     });
     if (!res.ok) throw new Error();
     showToast(`История «${label}» очищена`);
@@ -353,7 +363,9 @@ function fallbackAvatar(label) {
 function clearAuthLocal() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_LOGIN_KEY);
+  localStorage.removeItem(AUTH_UID_KEY);
   localStorage.removeItem(AUTH_TS_KEY);
+  ACCOUNT_ID = null;
   document.documentElement.classList.remove('pre-authed');
 }
 
@@ -387,6 +399,13 @@ async function checkAuth() {
       if (res.ok) {
         let v = {};
         try { v = await res.json(); } catch {}
+        // Обновляем id учётки из сессии (важно для старых сессий, где uid не
+        // сохранялся) и перезагружаем группы уже с правильным ACCOUNT_ID.
+        if (v.user_id) {
+          ACCOUNT_ID = v.user_id;
+          localStorage.setItem(AUTH_UID_KEY, String(v.user_id));
+          loadGroups();
+        }
         loadProfile(login, v.photo_url);
       } else {
         // Сессия действительно недействительна — только теперь показываем вход.

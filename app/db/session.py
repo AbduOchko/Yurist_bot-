@@ -55,6 +55,18 @@ async def create_tables():
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS caption TEXT;"
         ))
 
+        # ── users.telegram_id больше НЕ уникален: один Telegram-аккаунт может
+        # держать несколько учёток в приложении (каждая — свой app_login). Прежний
+        # unique=True создавал уникальный индекс ix_users_telegram_id (в старых
+        # схемах мог быть и constraint users_telegram_id_key). Снимаем оба и
+        # пересоздаём обычный индекс. Идемпотентно; существующие данные под
+        # уникальность подходят, так что снятие безопасно.
+        await conn.execute(text("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_telegram_id_key;"))
+        await conn.execute(text("DROP INDEX IF EXISTS ix_users_telegram_id;"))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_users_telegram_id ON users (telegram_id);"
+        ))
+
         # ── Фантомное «изм.»: раньше messages.updated_at проставлялся прямо при
         # вставке (default=utcnow) и расходился с created_at на микросекунды, из-за
         # чего фронт помечал редактированием каждое сообщение. Теперь колонка
