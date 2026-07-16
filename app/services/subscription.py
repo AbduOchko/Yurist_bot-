@@ -127,6 +127,24 @@ async def check_subscribed(telegram_id: int, session: AsyncSession) -> list[dict
     return missing
 
 
+async def enforce_subscription(telegram_id: Optional[int], session: AsyncSession):
+    """Проверка подписки по УЖЕ подтверждённому telegram_id аккаунта.
+
+    Используется на защищённых пользовательских эндпоинтах (сообщения, ИИ) вместо
+    verify_subscription: там telegram_id берётся из аутентифицированного User, а
+    не из тела запроса, поэтому его нельзя подменить. No-op, если проверка
+    выключена, каналов нет или telegram_id неизвестен. 403 с missing-каналами.
+    """
+    if telegram_id is None:
+        return
+    missing = await check_subscribed(telegram_id, session)
+    if missing:
+        raise HTTPException(
+            status_code=403,
+            detail={"reason": "subscription_required", "channels": missing},
+        )
+
+
 async def verify_subscription(
     request: Request,
     session: AsyncSession = Depends(get_session),

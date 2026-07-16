@@ -6,15 +6,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.security import assert_user_owns_chat, get_current_user
 from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.db.crud import (
     create_message,
     get_or_create_chat,
-    get_chat_by_id,
     get_pinned_messages,
 )
-from app.db.models import Chat, ChatType, MessageType, SenderType, Staff
+from app.db.models import Chat, ChatType, MessageType, SenderType, Staff, User
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -35,7 +35,15 @@ class ChatOut(BaseModel):
 
 
 @router.post("/", response_model=ChatOut)
-async def get_or_create(data: ChatIn, session: AsyncSession = Depends(get_session)):
+async def get_or_create(
+    data: ChatIn,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    # Создать/получить чат можно только для СВОЕЙ учётки — иначе можно было бы
+    # получить chat_id чужого аккаунта, подставив чужой user_id.
+    if data.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа к этому аккаунту")
     chat = await get_or_create_chat(session, user_id=data.user_id, chat_type=data.chat_type)
     return chat
 
@@ -50,11 +58,16 @@ async def _staff_names(session, *staff_ids):
 
 
 @router.get("/groups")
-async def user_groups(user_id: int, session: AsyncSession = Depends(get_session)):
+async def user_groups(
+    user_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     """Group chats the user participates in — shown under the 3 main cards.
 
-    Ключ — user_id вошедшей учётки (не telegram_id): у одного Telegram-аккаунта
-    может быть несколько учёток, у каждой свои группы."""
+    Только свои группы: user_id обязан совпадать с вошедшей учёткой."""
+    if user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа")
     chats = (await session.execute(
         select(Chat)
         .options(selectinload(Chat.messages))
@@ -92,11 +105,13 @@ async def user_groups(user_id: int, session: AsyncSession = Depends(get_session)
 
 
 @router.get("/group-info/{chat_id}")
-async def group_info(chat_id: int, session: AsyncSession = Depends(get_session)):
-    chat = (await session.execute(
-        select(Chat).where(Chat.id == chat_id, Chat.chat_type == ChatType.group)
-    )).scalar_one_or_none()
-    if not chat:
+async def group_info(
+    chat_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    chat = await assert_user_owns_chat(session, user, chat_id)
+    if chat.chat_type != ChatType.group:
         raise HTTPException(status_code=404, detail="Групповой чат не найден")
     names = await _staff_names(session, chat.lawyer_staff_id, chat.manager_staff_id)
     return {
@@ -107,15 +122,21 @@ async def group_info(chat_id: int, session: AsyncSession = Depends(get_session))
 
 
 @router.get("/{chat_id}", response_model=ChatOut)
-async def get_chat(chat_id: int, session: AsyncSession = Depends(get_session)):
-    chat = await get_chat_by_id(session, chat_id)
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    return chat
+async def get_chat(
+    chat_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await assert_user_owns_chat(session, user, chat_id)
 
 
 @router.get("/{chat_id}/pinned")
-async def get_pinned(chat_id: int, session: AsyncSession = Depends(get_session)):
+async def get_pinned(
+    chat_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await assert_user_owns_chat(session, user, chat_id)
     messages = await get_pinned_messages(session, chat_id)
     return [
         {
@@ -135,15 +156,20 @@ class ClearChatIn(BaseModel):
 
 
 @router.post("/clear")
-async def clear_chat(data: ClearChatIn, session: AsyncSession = Depends(get_session)):
+async def clear_chat(
+    data: ClearChatIn,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     """Clear chat history for THIS account only.
 
-    Ключ — user_id вошедшей учётки (не telegram_id). Ставит персональную отсечку
-    (chat.user_cleared_at): пользователь (и, для ИИ-чата, контекст модели) больше
-    не видит ничего до неё, но сообщения остаются в БД и видны персоналу. Для
-    чатов с персоналом добавляется системная пометка, что пользователь очистил
-    свою сторону.
+    Только своя учётка (user_id обязан совпадать с вошедшим). Ставит персональную
+    отсечку (chat.user_cleared_at): пользователь (и, для ИИ-чата, контекст модели)
+    больше не видит ничего до неё, но сообщения остаются в БД и видны персоналу.
+    Для чатов с персоналом добавляется системная пометка об очистке.
     """
+    if data.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа")
     result = await session.execute(
         select(Chat).where(Chat.user_id == data.user_id, Chat.chat_type == data.chat_type)
     )

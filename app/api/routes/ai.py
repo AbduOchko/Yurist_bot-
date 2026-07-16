@@ -6,14 +6,15 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.security import assert_user_owns_chat, get_current_user
 from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.config import settings
 from app.db import crud
-from app.db.models import MessageType, SenderType
+from app.db.models import MessageType, SenderType, User
 from app.db.session import get_session
 from app.services import gigachat
-from app.services.subscription import verify_subscription
+from app.services.subscription import enforce_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -159,9 +160,13 @@ class AIChatIn(BaseModel):
 @router.post("/chat")
 async def ai_chat(
     data: AIChatIn,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _sub=Depends(verify_subscription),
 ):
+    # Общаться с ИИ можно только в СВОЁМ чате; sender_id берём из аккаунта.
+    await assert_user_owns_chat(session, user, data.chat_id)
+    await enforce_subscription(user.telegram_id, session)
+
     if not _api_configured():
         await _send_error(data.chat_id, "ИИ (GigaChat) не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}
@@ -171,7 +176,7 @@ async def ai_chat(
         chat_id=data.chat_id,
         sender_type=SenderType.user,
         content=data.user_message,
-        sender_id=data.user_id,
+        sender_id=user.telegram_id,
     )
     user_payload = {
         "type": "message",
@@ -228,9 +233,12 @@ def _decode_data_url(data_url: str) -> tuple[Optional[bytes], str]:
 @router.post("/media")
 async def ai_media(
     data: AIMediaIn,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _sub=Depends(verify_subscription),
 ):
+    await assert_user_owns_chat(session, user, data.chat_id)
+    await enforce_subscription(user.telegram_id, session)
+
     if not _api_configured():
         await _send_error(data.chat_id, "ИИ (GigaChat) не настроен. Обратитесь к администратору.")
         return {"ok": False, "error": "api_key_missing"}
@@ -253,7 +261,7 @@ async def ai_media(
         file_url=data.file_url,
         file_name=data.file_name,
         file_size=data.file_size,
-        sender_id=data.user_id,
+        sender_id=user.telegram_id,
     )
     media_payload = {
         "type": "message",

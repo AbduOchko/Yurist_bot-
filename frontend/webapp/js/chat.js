@@ -242,10 +242,25 @@ function setChatAvatar(type) {
 }
 
 // ── API helper ───────────────────────────────
+// Заголовки с токеном сессии — все пользовательские эндпоинты теперь требуют его
+// и проверяют, что чат принадлежит этому аккаунту.
+function authHeaders(extra) {
+  const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+  const token = localStorage.getItem('yurist_auth_token');
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+}
+
 async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: authHeaders() };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(API_BASE + path, opts);
+  if (res.status === 401) {
+    // Сессия недействительна → на экран входа.
+    localStorage.removeItem('yurist_auth_token');
+    window.location.href = '/';
+    throw new Error('Требуется вход');
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -279,7 +294,10 @@ async function loadGroupInfo() {
 // ── WebSocket ────────────────────────────────
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${proto}://${location.host}/ws/chat/${CHAT_ID}/${USER_ID_INT}`;
+  // Токен в query — браузерный WebSocket не умеет слать заголовки. Сервер по
+  // нему пускает только к своему чату.
+  const token = encodeURIComponent(localStorage.getItem('yurist_auth_token') || '');
+  const wsUrl = `${proto}://${location.host}/ws/chat/${CHAT_ID}/${USER_ID_INT}?token=${token}`;
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => console.log('WS connected');
@@ -812,7 +830,7 @@ async function sendMessage() {
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           chat_id: CHAT_ID,
           user_message: text,
@@ -1177,7 +1195,7 @@ async function sendPendingMedia(caption) {
       showAITyping();
       const res = await fetch('/api/ai/media', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           chat_id: CHAT_ID,
           user_id: USER_ID_INT,

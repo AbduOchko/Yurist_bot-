@@ -54,6 +54,15 @@ const AUTH_TS_KEY    = 'yurist_auth_ts';     // когда пользовате�
 // id вошедшей учётки в приложении (users.id). Именно он, а не telegram_id,
 // определяет, чьи это чаты: один Telegram-аккаунт может держать несколько учёток.
 let ACCOUNT_ID = parseInt(localStorage.getItem(AUTH_UID_KEY) || '0', 10) || null;
+
+// Заголовки с токеном сессии — пользовательские эндпоинты (чаты/группы/очистка)
+// теперь требуют его и проверяют владение.
+function authHeaders(extra) {
+  const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+}
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;     // авто-выход при неактивности > недели
 
 // ── DOM refs ──────────────────────────────
@@ -275,7 +284,7 @@ function escapeHtmlSafe(s) { return String(s ?? '').replace(/&/g, '&amp;').repla
 async function loadGroups() {
   if (!ACCOUNT_ID) return;   // группы принадлежат учётке, не telegram_id
   try {
-    const res = await fetch(`/api/chats/groups?user_id=${ACCOUNT_ID}`);
+    const res = await fetch(`/api/chats/groups?user_id=${ACCOUNT_ID}`, { headers: authHeaders() });
     if (!res.ok) return;
     renderGroupCards(await res.json());
   } catch {}
@@ -314,7 +323,7 @@ async function clearHistory(chatType, label) {
   try {
     const res = await fetch('/api/chats/clear', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ user_id: ACCOUNT_ID, chat_type: chatType }),
     });
     if (!res.ok) throw new Error();

@@ -13,7 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.api.websocket_manager import manager
-from app.db.models import Staff, StaffRole
+from app.db.models import Chat, Staff, StaffRole, User
 from app.db.session import async_session_maker
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,27 @@ router = APIRouter(tags=["websocket"])
 # ── End-user chat WS ──────────────────────────────────────────────────
 @router.websocket("/ws/chat/{chat_id}/{user_id}")
 async def chat_websocket(websocket: WebSocket, chat_id: int, user_id: int):
+    # Приватность: подключиться к «комнате» чата можно только по валидному токену
+    # сессии И только к СВОЕМУ чату. Токен передаётся в query (?token=...), как у
+    # /ws/staff — заголовки из браузерного WebSocket не отправить.
+    token = websocket.query_params.get("token", "").strip()
+    if not token:
+        await websocket.close(code=4401)
+        return
+    async with async_session_maker() as session:
+        acc = (await session.execute(
+            select(User).where(User.session_token == token)
+        )).scalar_one_or_none()
+        if not acc:
+            await websocket.close(code=4401)
+            return
+        chat = (await session.execute(
+            select(Chat).where(Chat.id == chat_id)
+        )).scalar_one_or_none()
+        if not chat or chat.user_id != acc.id:
+            await websocket.close(code=4403)
+            return
+
     await manager.connect_chat(websocket, chat_id)
     try:
         while True:

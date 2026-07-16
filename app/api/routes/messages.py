@@ -6,12 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.security import assert_user_owns_chat, get_current_user
 from app.api.utils import iso_utc
 from app.api.websocket_manager import manager
 from app.db import crud
-from app.db.models import ChatType, Message, MessageType, SenderType
+from app.db.models import ChatType, Message, MessageType, SenderType, User
 from app.db.session import get_session
-from app.services.subscription import verify_subscription
+from app.services.subscription import enforce_subscription
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
 
@@ -49,20 +50,20 @@ async def get_messages(
     chat_id: int,
     limit: int = 50,
     offset: int = 0,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    # User-side view: honour the per-user "clear history" cutoff.
-    chat = await crud.get_chat_by_id(session, chat_id)
-    after = chat.user_cleared_at if chat else None
-    messages = await crud.get_messages(session, chat_id, limit=limit, offset=offset, after=after)
+    # Приватность: историю чата видит только его владелец (персонал — через свои
+    # эндпоинты /api/manager|lawyer). Плюс учитываем персональную отсечку очистки.
+    chat = await assert_user_owns_chat(session, user, chat_id)
+    messages = await crud.get_messages(
+        session, chat_id, limit=limit, offset=offset, after=chat.user_cleared_at
+    )
     return [serialize_message(m) for m in messages]
 
 
 class MessageIn(BaseModel):
     chat_id: int
-    sender_type: SenderType = SenderType.user
-    sender_id: Optional[int] = None
-    sender_name: Optional[str] = None
     content: Optional[str] = None
     caption: Optional[str] = None
     message_type: MessageType = MessageType.text
@@ -76,31 +77,41 @@ class MessageIn(BaseModel):
 @router.post("/")
 async def send_message(
     data: MessageIn,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _sub=Depends(verify_subscription),
 ):
+    # Писать можно только в свой чат. Отправитель — всегда сам пользователь:
+    # sender_type/имя/id задаёт сервер, поэтому подделать сообщение «от юриста»
+    # или «от системы» в своём чате нельзя (раньше эти поля брались из тела).
+    await assert_user_owns_chat(session, user, data.chat_id)
+    await enforce_subscription(user.telegram_id, session)
+
+    reply_to_id = data.reply_to_id
+    if reply_to_id is not None:
+        # reply_to обязан принадлежать этому же чату — иначе не даём сослаться
+        # на чужое сообщение (утечка превью). Просто снимаем ссылку.
+        ok = (await session.execute(
+            select(Message.id).where(Message.id == reply_to_id, Message.chat_id == data.chat_id)
+        )).scalar_one_or_none()
+        if ok is None:
+            reply_to_id = None
+
     msg = await crud.create_message(
         session,
         chat_id=data.chat_id,
-        sender_type=data.sender_type,
+        sender_type=SenderType.user,
         content=data.content,
         caption=data.caption,
         message_type=data.message_type,
         file_url=data.file_url,
         file_name=data.file_name,
         file_size=data.file_size,
-        reply_to_id=data.reply_to_id,
-        sender_id=data.sender_id,
-        sender_name=data.sender_name,
+        reply_to_id=reply_to_id,
+        sender_id=user.telegram_id,
+        sender_name=user.first_name or "Пользователь",
         forwarded_from_chat_type=data.forwarded_from_chat_type,
     )
-    # Перезапрашиваем сообщение вместе со связью: ниже serialize_message читает
-    # msg.reply_to, а ленивая загрузка в async-сессии падает с MissingGreenlet,
-    # когда исходного сообщения нет в identity map (в проде сессия своя на каждый
-    # запрос). refresh(msg, ["reply_to"]) тут не подходит — он лишь помечает связь
-    # устаревшей, и она всё равно грузится лениво.
-    # Раньше тут стоял session.get(type(msg).__class__, ...) — он передавал
-    # метакласс вместо модели Message и ронял 500-й на КАЖДОМ ответе-реплае.
+    # Подгружаем reply_to для сериализации (иначе ленивое обращение падает в async).
     if msg.reply_to_id:
         msg = (await session.execute(
             select(Message)
@@ -129,20 +140,31 @@ class EditIn(BaseModel):
     content: str
 
 
+async def _load_owned_message(session, user, message_id):
+    """Load a message and assert the caller owns its chat. Returns the Message."""
+    msg = (await session.execute(
+        select(Message).where(Message.id == message_id)
+    )).scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+    await assert_user_owns_chat(session, user, msg.chat_id)
+    return msg
+
+
 @router.patch("/{message_id}")
 async def edit_message(
     message_id: int,
     data: EditIn,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    msg = await _load_owned_message(session, user, message_id)
+    if msg.sender_type != SenderType.user:
+        raise HTTPException(status_code=403, detail="Можно редактировать только свои сообщения")
     msg = await crud.edit_message(session, message_id, data.content)
-    if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
     payload = serialize_message(msg)
     event = {"type": "edit", **payload}
     await manager.broadcast_to_chat(msg.chat_id, event)
-    # Mirror the edit to staff panels (lawyer / manager / owner) so the other
-    # side sees the change live instead of only after re-opening the chat.
     chat = await crud.get_chat_by_id(session, msg.chat_id)
     if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support, ChatType.group):
         await manager.broadcast_to_staff_for_chat(chat, event)
@@ -150,18 +172,19 @@ async def edit_message(
 
 
 @router.delete("/{message_id}")
-async def delete_message(message_id: int, session: AsyncSession = Depends(get_session)):
-    # Get message first to find chat_id
-    result = await session.execute(select(Message).where(Message.id == message_id))
-    msg = result.scalar_one_or_none()
-    if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
+async def delete_message(
+    message_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    msg = await _load_owned_message(session, user, message_id)
+    if msg.sender_type != SenderType.user:
+        raise HTTPException(status_code=403, detail="Можно удалять только свои сообщения")
     chat_id = msg.chat_id
     ok = await crud.delete_message(session, message_id)
     if ok:
         event = {"type": "delete", "message_id": message_id}
         await manager.broadcast_to_chat(chat_id, event)
-        # Mirror deletion to staff panels so the other side sees it live.
         chat = await crud.get_chat_by_id(session, chat_id)
         if chat and chat.chat_type in (ChatType.lawyer, ChatType.match, ChatType.support, ChatType.group):
             await manager.broadcast_to_staff_for_chat(chat, event)
@@ -169,10 +192,14 @@ async def delete_message(message_id: int, session: AsyncSession = Depends(get_se
 
 
 @router.post("/{message_id}/pin")
-async def pin_message(message_id: int, session: AsyncSession = Depends(get_session)):
+async def pin_message(
+    message_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    # Закрепить можно любое сообщение в СВОЁМ чате (в т.ч. ответ юриста).
+    await _load_owned_message(session, user, message_id)
     msg = await crud.toggle_pin_message(session, message_id)
-    if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
     payload = serialize_message(msg)
     await manager.broadcast_to_chat(msg.chat_id, {"type": "pin", **payload})
     return payload

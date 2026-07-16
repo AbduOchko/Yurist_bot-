@@ -10,7 +10,7 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Chat, ChatType, Staff, StaffRole
+from app.db.models import Chat, ChatType, Staff, StaffRole, User
 from app.db.session import get_session
 
 # ── Password hashing (PBKDF2-SHA256, stdlib only) ─────────────────────────
@@ -135,3 +135,44 @@ async def assert_chat_access(session: AsyncSession, staff: Staff, chat_id: int) 
         if chat.lawyer_staff_id == staff.id or chat.lawyer_staff_id is None:
             return chat
     raise HTTPException(status_code=403, detail="Нет доступа к этому чату")
+
+
+# ── End-user auth: bearer session_token → User + chat-ownership check ──────
+async def _resolve_user(token: str, session: AsyncSession) -> Optional[User]:
+    if not token:
+        return None
+    result = await session.execute(select(User).where(User.session_token == token))
+    return result.scalar_one_or_none()
+
+
+async def get_current_user(
+    authorization: str = Header(default=""),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """FastAPI dependency: resolves the end-user from the bearer session_token.
+
+    The token is issued at login/register (User.session_token) and sent by the
+    webapp as `Authorization: Bearer <token>`. Raises 401 if missing/invalid.
+    """
+    user = await _resolve_user(_extract_token(authorization), session)
+    if not user:
+        raise HTTPException(status_code=401, detail="Требуется вход")
+    return user
+
+
+async def assert_user_owns_chat(session: AsyncSession, user: User, chat_id: int) -> Chat:
+    """Object-level ownership check: the chat must belong to THIS account.
+
+    This is the core privacy guarantee — a user can only touch their own chats
+    (ai / lawyer / match / support / group where they are the client). Staff use
+    their own endpoints (require_role + assert_chat_access), never these.
+
+    Raises 404 if the chat doesn't exist, 403 if it belongs to someone else.
+    """
+    result = await session.execute(select(Chat).where(Chat.id == chat_id))
+    chat = result.scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    if chat.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа к этому чату")
+    return chat
