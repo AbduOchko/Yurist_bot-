@@ -1,0 +1,53 @@
+# Изолированный стек юрист-бота для Contabo (по образцу других проектов сервера).
+# Свой Postgres, своя сеть, свой том — не конфликтует с alfred/guideai/invest-bot.
+# Наружу порты НЕ публикуем: HTTPS выдаёт общий Caddy (проект guideai), проксируя
+# поддомен на контейнер yurist-app-1 по общей сети caddy (guideai-prod_default).
+name: yurist
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: yurist
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in deploy/.env}
+      POSTGRES_DB: yurist
+    volumes:
+      # postgres:18+ монтирует том на /var/lib/postgresql (данные — в подкаталоге версии)
+      - yurist_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yurist -d yurist"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # База — внутри сети проекта. Приложение само приводит postgresql:// → asyncpg.
+      DATABASE_URL: postgresql://yurist:${DB_PASSWORD}@db:5432/yurist
+      PORT: "8080"
+    # Локальный порт для отладки на сервере (наружу закрыт). 8091, чтобы не пересечься
+    # с alfred (8090) и guideai (8000).
+    ports:
+      - "127.0.0.1:8091:8080"
+    networks:
+      - default
+      - caddy
+
+networks:
+  # Общая сеть с Caddy (создаётся проектом guideai). Caddy достаёт нас по имени
+  # контейнера yurist-app-1.
+  caddy:
+    external: true
+    name: guideai-prod_default
+
+volumes:
+  yurist_pgdata:

@@ -1,0 +1,9 @@
+# Добавить этот блок в /opt/guideai/infra/Caddyfile и перезагрузить Caddy:
+#   docker exec guideai-prod-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+# Домен должен резолвиться на IP сервера (A-запись), иначе Caddy не выпустит TLS.
+# Замените yurist.example.ru на реальный поддомен.
+
+yurist.example.ru {
+	reverse_proxy yurist-app-1:8080
+	encode gzip
+}
