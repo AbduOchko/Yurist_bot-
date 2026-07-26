@@ -15,6 +15,14 @@ services:
     volumes:
       # postgres:18+ монтирует том на /var/lib/postgresql (данные — в подкаталоге версии)
       - yurist_pgdata:/var/lib/postgresql
+    networks:
+      default:
+        # Уникальное имя базы в сети. НЕ использовать 'db': приложение также
+        # подключено к общей сети Caddy (guideai-prod_default), где у guideai
+        # свой контейнер с алиасом 'db' → hostname 'db' резолвится неоднозначно
+        # и приложение попадает в ЧУЖУЮ базу (ошибка auth для юзера yurist).
+        aliases:
+          - yurist-db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U yurist -d yurist"]
       interval: 5s
@@ -31,8 +39,9 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      # База — внутри сети проекта. Приложение само приводит postgresql:// → asyncpg.
-      DATABASE_URL: postgresql://yurist:${DB_PASSWORD}@db:5432/yurist
+      # База — по уникальному алиасу yurist-db (см. коммент у db). Приложение само
+      # приводит postgresql:// → asyncpg.
+      DATABASE_URL: postgresql://yurist:${DB_PASSWORD}@yurist-db:5432/yurist
       PORT: "8080"
     # Локальный порт для отладки на сервере (наружу закрыт). 8091, чтобы не пересечься
     # с alfred (8090) и guideai (8000).
