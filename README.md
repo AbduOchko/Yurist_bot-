@@ -1,5 +1,7 @@
 <img width="398" height="648" alt="Снимок экрана — 2026-08-01 в 23 33 28" src="https://github.com/user-attachments/assets/a35d718a-8a4d-4aaa-8590-a3832e658cd9" />
 <img width="402" height="647" alt="Снимок экрана — 2026-08-01 в 23 33 04" src="https://github.com/user-attachments/assets/6234c200-9682-40a9-a5f8-f7cf7b796760" />
+
+
 # Legal Services Platform (Telegram)
 
 A Telegram-native legal services platform: clients chat with an AI legal assistant or a real lawyer, while a staff layer (owner / manager / lawyer) runs the operation through role-specific panels — all on one FastAPI backend with real-time chat.
