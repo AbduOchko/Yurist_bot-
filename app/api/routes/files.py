@@ -3,9 +3,10 @@ import uuid
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
+from app.api.security import get_current_actor
 from app.config import settings
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -27,7 +28,7 @@ def get_message_type(content_type: str) -> str:
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), actor=Depends(get_current_actor)):
     if file.size and file.size > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large")
 
@@ -57,7 +58,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @router.get("/{filename}")
-async def get_file(filename: str):
+async def get_file(filename: str, actor=Depends(get_current_actor)):
     file_path = Path(settings.UPLOAD_DIR) / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")

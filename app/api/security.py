@@ -176,3 +176,26 @@ async def assert_user_owns_chat(session: AsyncSession, user: User, chat_id: int)
     if chat.user_id != user.id:
         raise HTTPException(status_code=403, detail="Нет доступа к этому чату")
     return chat
+
+
+# ── Either-actor auth: file endpoints are shared by end-users and staff ────
+async def get_current_actor(
+    authorization: str = Header(default=""),
+    session: AsyncSession = Depends(get_session),
+):
+    """FastAPI dependency: resolves ANY authenticated account (end-user or
+    staff) from the bearer session_token. Used for endpoints like file
+    upload/download that both sides of a chat need to call — unlike
+    get_current_user/require_role, this doesn't care which kind of account
+    it is, only that the bearer token is a real, valid session.
+
+    Raises 401 if the token doesn't match a user or staff session.
+    """
+    token = _extract_token(authorization)
+    user = await _resolve_user(token, session)
+    if user:
+        return user
+    staff = await _resolve_staff(token, session)
+    if staff:
+        return staff
+    raise HTTPException(status_code=401, detail="Требуется вход")
